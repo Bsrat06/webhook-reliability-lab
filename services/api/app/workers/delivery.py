@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import decrypt_secret, sign_payload
-from app.domain.retry import RetryPolicySpec, is_retryable, retry_delay_ms
+from app.domain.retry import RetryPolicySpec, delay_after_failure, is_retryable
 from app.models import (
     TERMINAL_DELIVERY_STATUSES,
     DeadLetter,
@@ -34,17 +34,34 @@ from app.services.events import enqueue_delivery_job, record_transition
 log = logging.getLogger("worker.delivery")
 MAX_JOB_CLAIMS = 5
 
+# Claims are serialized with a transaction-scoped advisory lock so per-group running counts are exact;
+# the claim transaction is tiny, so this costs little. SKIP LOCKED still guards against row contention.
+CLAIM_LOCK_SQL = text("SELECT pg_advisory_xact_lock(727201)")
 CLAIM_SQL = text(
     """
-    UPDATE jobs SET status = 'running', lease_owner = :worker,
-        lease_expires_at = now() + make_interval(secs => :lease), claim_count = claim_count + 1, updated_at = now()
-    WHERE id IN (
-        SELECT id FROM jobs
+    WITH running AS (
+        SELECT concurrency_key, count(*) AS n FROM jobs
+        WHERE status = 'running' AND lease_expires_at >= now() AND concurrency_key IS NOT NULL
+        GROUP BY concurrency_key
+    ), due AS (
+        SELECT id, scheduled_at, concurrency_key, concurrency_limit FROM jobs
         WHERE (status = 'queued' AND scheduled_at <= now())
            OR (status = 'running' AND lease_expires_at < now())
         ORDER BY scheduled_at
+        LIMIT 5000
+    ), ranked AS (
+        SELECT d.id, d.scheduled_at, d.concurrency_key, d.concurrency_limit,
+               row_number() OVER (PARTITION BY d.concurrency_key ORDER BY d.scheduled_at) + coalesce(r.n, 0) AS slot
+        FROM due d LEFT JOIN running r ON r.concurrency_key = d.concurrency_key
+    )
+    UPDATE jobs SET status = 'running', lease_owner = :worker,
+        lease_expires_at = now() + make_interval(secs => :lease), claim_count = claim_count + 1, updated_at = now()
+    WHERE id IN (
+        SELECT j.id FROM jobs j JOIN ranked k ON k.id = j.id
+        WHERE k.concurrency_key IS NULL OR k.concurrency_limit IS NULL OR k.slot <= k.concurrency_limit
+        ORDER BY k.scheduled_at
         LIMIT :n
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF j SKIP LOCKED
     )
     RETURNING id, job_type, payload, claim_count
     """
@@ -60,6 +77,7 @@ class ClaimedJob:
 
 
 def claim_jobs(db: Session, worker_id: str, n: int) -> list[ClaimedJob]:
+    db.execute(CLAIM_LOCK_SQL)
     rows = db.execute(CLAIM_SQL, {"worker": worker_id, "lease": get_settings().worker_lease_seconds, "n": n}).all()
     db.commit()
     return [ClaimedJob(r.id, r.job_type, r.payload, r.claim_count) for r in rows]
@@ -86,6 +104,7 @@ class Prepared:
     body: bytes
     headers: dict[str, str]
     attempt_number: int
+    timeout_ms: int
 
 
 def _prepare(db: Session, job: ClaimedJob, worker_id: str) -> Prepared | None:
@@ -135,8 +154,9 @@ def _prepare(db: Session, job: ClaimedJob, worker_id: str) -> Prepared | None:
     if ev.idempotency_key:
         headers["idempotency-key"] = ev.idempotency_key
     url = ep.destination_url if ep.endpoint_type == "external" else f"{settings.receiver_base_url}/receiver/{ep.id}"
+    timeout_ms = RetryPolicySpec.model_validate(d.retry_policy).timeout_ms
     db.commit()
-    return Prepared(d.id, url, body, headers, attempt_number)
+    return Prepared(d.id, url, body, headers, attempt_number, timeout_ms)
 
 
 @dataclass
@@ -151,7 +171,14 @@ class HttpResult:
     error_message: str | None = None
 
 
-SAFE_RESPONSE_HEADERS = {"content-type", "content-length", "retry-after", "date", "x-receiver-decision"}
+SAFE_RESPONSE_HEADERS = {
+    "content-type",
+    "content-length",
+    "retry-after",
+    "date",
+    "x-receiver-decision",
+    "x-receiver-result",
+}
 
 
 def _send(client: httpx.Client, p: Prepared) -> HttpResult:
@@ -159,8 +186,10 @@ def _send(client: httpx.Client, p: Prepared) -> HttpResult:
     started = datetime.now(UTC)
     t0 = time.monotonic()
     result = HttpResult(started=started, completed=started, duration_ms=0)
+    t = p.timeout_ms / 1000
+    timeout = httpx.Timeout(t, connect=min(5.0, t))
     try:
-        with client.stream("POST", p.url, content=p.body, headers=p.headers) as resp:
+        with client.stream("POST", p.url, content=p.body, headers=p.headers, timeout=timeout) as resp:
             buf = b""
             for chunk in resp.iter_bytes():
                 buf += chunk
@@ -170,9 +199,12 @@ def _send(client: httpx.Client, p: Prepared) -> HttpResult:
             result.headers = {k: v[:200] for k, v in resp.headers.items() if k.lower() in SAFE_RESPONSE_HEADERS}
             result.excerpt = buf[: settings.response_excerpt_bytes].decode("utf-8", "replace")
     except httpx.TimeoutException:
-        result.error_category, result.error_message = "timeout", "Request timed out"
+        result.error_category, result.error_message = "timeout", f"No response within {p.timeout_ms} ms"
     except httpx.ConnectError:
         result.error_category, result.error_message = "connection_error", "Could not connect to destination"
+    except (httpx.RemoteProtocolError, httpx.ReadError):
+        result.error_category = "connection_reset"
+        result.error_message = "Connection closed before the response completed"
     except httpx.HTTPError as exc:
         result.error_category, result.error_message = "network_error", type(exc).__name__
     result.completed = datetime.now(UTC)
@@ -186,6 +218,19 @@ def _category_for_status(status: int) -> str | None:
     if status == 429:
         return "rate_limited"
     return "http_5xx" if status >= 500 else "http_4xx"
+
+
+def _retry_after(r: HttpResult) -> float | None:
+    if r.status not in (429, 503) or not r.headers:
+        return None
+    try:
+        return max(0.0, float(r.headers.get("retry-after", "")))
+    except ValueError:
+        return None
+
+
+def _jitter_rng(d: Delivery) -> random.Random:
+    return random.Random()
 
 
 def _record(db: Session, job: ClaimedJob, worker_id: str, p: Prepared, r: HttpResult) -> str:
@@ -223,16 +268,21 @@ def _record(db: Session, job: ClaimedJob, worker_id: str, p: Prepared, r: HttpRe
         )
     )
     held = _held_job(db, job.id, worker_id)
-    if held is None or d.status in TERMINAL_DELIVERY_STATUSES:
+    if held is None:
         db.commit()
         return "lease_lost"
+    if d.status in TERMINAL_DELIVERY_STATUSES:
+        # Cancelled (or finished elsewhere) while in flight: keep the attempt, schedule nothing.
+        _finish_job(held)
+        db.commit()
+        return "superseded"
     d.last_error_category = category
     now = func.now()
     if outcome == "success":
         record_transition(db, d, "succeeded", f"attempt {d.attempt_count}: HTTP {r.status}")
         d.completed_at, d.next_attempt_at = now, None
     elif outcome == "retryable_failure" and d.attempt_count < policy.max_attempts:
-        delay = retry_delay_ms(policy, d.attempt_count, random.Random())
+        delay = delay_after_failure(policy, d.attempt_count, _retry_after(r), _jitter_rng(d))
         d.next_attempt_at = func.now() + timedelta(milliseconds=delay)
         record_transition(db, d, "retry_scheduled", f"attempt {d.attempt_count} failed ({category}); retry in {delay} ms")
         enqueue_delivery_job(db, d, delay)
@@ -256,14 +306,38 @@ def make_client() -> httpx.Client:
     return httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False)
 
 
+def _system_handlers() -> dict:
+    from app.services.retention import run_cleanup
+
+    return {"cleanup": run_cleanup}
+
+
+def _process_system_job(session_factory, job: ClaimedJob, worker_id: str) -> str:
+    handler = _system_handlers().get(job.job_type)
+    with session_factory() as db:
+        held = _held_job(db, job.id, worker_id)
+        if held is None:
+            db.rollback()
+            return "lease_lost"
+        if handler is None:
+            _finish_job(held, "failed", f"unknown job type {job.job_type}")
+            db.commit()
+            return "unknown"
+        db.commit()
+    # Handlers run their own short transactions and are idempotent; the lease prevents parallel runs.
+    with session_factory() as db:
+        result = handler(db, job.payload)
+    with session_factory() as db:
+        held = _held_job(db, job.id, worker_id)
+        if held:
+            _finish_job(held)
+        db.commit()
+    return result
+
+
 def process_job(session_factory, client: httpx.Client, job: ClaimedJob, worker_id: str) -> str:
     if job.job_type != "deliver":
-        with session_factory() as db:
-            held = _held_job(db, job.id, worker_id)
-            if held:
-                _finish_job(held, "failed", f"unknown job type {job.job_type}")
-            db.commit()
-        return "unknown"
+        return _process_system_job(session_factory, job, worker_id)
     with session_factory() as db:
         prepared = _prepare(db, job, worker_id)
     if prepared is None:

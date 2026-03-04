@@ -20,8 +20,9 @@ from app.models import (
 )
 
 
-def enqueue_delivery_job(db: Session, delivery: Delivery, delay_ms: int = 0) -> None:
+def enqueue_delivery_job(db: Session, delivery: Delivery, delay_ms: int = 0, concurrency_limit: int | None = None) -> None:
     """Schedule on the database clock so API, worker and DB never disagree about due time."""
+    limit = get_settings().quota_workspace_concurrency
     db.add(
         Job(
             workspace_id=delivery.workspace_id,
@@ -30,8 +31,27 @@ def enqueue_delivery_job(db: Session, delivery: Delivery, delay_ms: int = 0) -> 
             # One job per (delivery, attempt) so a retry can never be enqueued twice.
             dedupe_key=f"deliver:{delivery.id}:{delivery.attempt_count + 1}",
             scheduled_at=func.now() + timedelta(milliseconds=delay_ms),
+            # Per-workspace in-flight limit, so one guest cannot occupy every worker slot.
+            concurrency_key=f"ws:{delivery.workspace_id}",
+            concurrency_limit=min(limit, concurrency_limit or limit),
         )
     )
+
+
+def new_delivery(db: Session, *, event: Event, endpoint: Endpoint, retry_policy: dict, reason: str = "created", **extra) -> Delivery:
+    """Persist a pending delivery with its first transition. The caller enqueues and commits."""
+    d = Delivery(
+        workspace_id=event.workspace_id,
+        event_id=event.id,
+        endpoint_id=endpoint.id,
+        status="pending",
+        retry_policy=retry_policy,
+        **extra,
+    )
+    db.add(d)
+    db.flush()
+    db.add(DeliveryTransition(workspace_id=d.workspace_id, delivery_id=d.id, from_status=None, to_status="pending", reason=reason))
+    return d
 
 
 def record_transition(db: Session, d: Delivery, to_status: str, reason: str = "") -> None:
@@ -89,11 +109,7 @@ def create_event(
     db.flush()
     # Event, deliveries and their initial jobs commit atomically: no delivery without a job.
     for ep in endpoints:
-        d = Delivery(workspace_id=ws.id, event_id=event.id, endpoint_id=ep.id, status="pending", retry_policy=ep.retry_policy)
-        db.add(d)
-        db.flush()
-        db.add(DeliveryTransition(workspace_id=ws.id, delivery_id=d.id, from_status=None, to_status="pending", reason="created"))
-        enqueue_delivery_job(db, d)
+        enqueue_delivery_job(db, new_delivery(db, event=event, endpoint=ep, retry_policy=ep.retry_policy))
     db.commit()
     return event
 

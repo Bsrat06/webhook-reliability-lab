@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models import WorkerHeartbeat
+from app.services.retention import schedule_cleanup
 from app.workers.delivery import claim_jobs, make_client, process_job
 
 log = logging.getLogger("worker")
@@ -35,6 +36,7 @@ def run(stop: threading.Event | None = None, concurrency: int | None = None) -> 
     in_flight: set = set()
     lock = threading.Lock()
     last_beat = 0.0
+    last_cleanup = 0.0
     log.info("worker %s started (concurrency=%d)", worker_id, concurrency)
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         while not stop.is_set():
@@ -42,6 +44,10 @@ def run(stop: threading.Event | None = None, concurrency: int | None = None) -> 
                 if time.monotonic() - last_beat > 5:
                     heartbeat(worker_id)
                     last_beat = time.monotonic()
+                if time.monotonic() - last_cleanup > settings.cleanup_interval_seconds:
+                    with SessionLocal() as db:
+                        schedule_cleanup(db)
+                    last_cleanup = time.monotonic()
                 with lock:
                     free = concurrency - len(in_flight)
                 jobs = []
