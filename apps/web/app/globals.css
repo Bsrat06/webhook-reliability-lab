@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+/*
+  Visual language: a lab instrument, not a marketing dashboard.
+  Paper-and-ink neutrals, hairline rules, dense tabular data, one signal accent.
+  Status is always conveyed by glyph + label, never color alone.
+*/
+:root {
+  --paper: #f5f3ee;
+  --panel: #fbfaf7;
+  --ink: #1c1b18;
+  --ink-2: #57544c;
+  --ink-3: #8a867b;
+  --rule: #dcd8cd;
+  --rule-strong: #c4bfb1;
+  --accent: #c2410c;
+  --accent-ink: #ffffff;
+  --ok: #2f7a4b;
+  --warn: #a8650a;
+  --bad: #b42318;
+  --busy: #2556a3;
+  --idle: #6f6b61;
+  --focus: #c2410c;
+  --code-bg: #efece4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #131311;
+    --panel: #1a1a17;
+    --ink: #ece9e1;
+    --ink-2: #b3afa4;
+    --ink-3: #7f7b71;
+    --rule: #2c2b27;
+    --rule-strong: #3d3b35;
+    --accent: #f0703a;
+    --accent-ink: #1a0d05;
+    --ok: #5cbf83;
+    --warn: #e0a43f;
+    --bad: #f0675c;
+    --busy: #78a6f0;
+    --idle: #9a968b;
+    --focus: #f0703a;
+    --code-bg: #20201c;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-panel: var(--panel);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-busy: var(--busy);
+  --color-idle: var(--idle);
+  --color-code: var(--code-bg);
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+  --radius-sm: 3px;
+  --radius-md: 5px;
+}
+
+html,
+body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@keyframes pulse-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
