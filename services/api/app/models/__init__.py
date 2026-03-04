@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -135,6 +136,7 @@ class Delivery(Base):
         Index("ix_deliveries_ws_status_created", "workspace_id", "status", "created_at"),
         Index("ix_deliveries_event", "event_id"),
         Index("ix_deliveries_endpoint", "endpoint_id"),
+        Index("ix_deliveries_replay_of", "replay_of_delivery_id"),
     )
 
 
@@ -218,10 +220,15 @@ class Job(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Jobs sharing a concurrency key never run more than concurrency_limit at once (per-workspace limits).
+    concurrency_key: Mapped[str | None] = mapped_column(String(80))
+    concurrency_limit: Mapped[int | None] = mapped_column(Integer)
     __table_args__ = (
         CheckConstraint(_in("status", JOB_STATUSES), name="ck_job_status"),
+        CheckConstraint("concurrency_limit IS NULL OR concurrency_limit > 0", name="ck_job_concurrency"),
         Index("ix_jobs_due", "status", "scheduled_at"),
         Index("ix_jobs_lease", "status", "lease_expires_at"),
+        Index("ix_jobs_running_group", "concurrency_key", postgresql_where=text("status = 'running'")),
     )
 
 
@@ -230,3 +237,40 @@ class WorkerHeartbeat(Base):
     worker_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     started_at: Mapped[datetime] = _created()
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class IdempotencyRecord(Base):
+    """Keys processed by a built-in receiver. Uniqueness is enforced by the database, not application checks."""
+
+    __tablename__ = "idempotency_records"
+    id: Mapped[uuid.UUID] = _uuid()
+    workspace_id: Mapped[uuid.UUID] = _ws_fk()
+    endpoint_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("endpoints.id", ondelete="CASCADE"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    first_delivery_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    first_seen_at: Mapped[datetime] = _created()
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    seen_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    processing_result: Mapped[str] = mapped_column(String(20), nullable=False, default="processed")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (
+        UniqueConstraint("endpoint_id", "idempotency_key", name="uq_idempotency_scope"),
+        CheckConstraint("seen_count >= 1", name="ck_idempotency_seen"),
+        Index("ix_idempotency_ws", "workspace_id", "last_seen_at"),
+        Index("ix_idempotency_expires", "expires_at"),
+    )
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[uuid.UUID] = _ws_fk()
+    actor: Mapped[str] = mapped_column(String(80), nullable=False)
+    action: Mapped[str] = mapped_column(String(60), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(64))
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (Index("ix_audit_ws", "workspace_id", "id"),)
