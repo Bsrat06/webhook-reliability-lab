@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     quota_endpoints: int = 5
     quota_payload_bytes: int = 256 * 1024
     quota_events_per_hour: int = 2000
+    quota_replays_per_hour: int = 500
+    quota_bulk_replay: int = 50
+    quota_workspace_concurrency: int = 4
+    quota_concurrent_simulations: int = 1
+    quota_simulation_events: int = 1000
+    quota_simulation_events_per_hour: int = 10_000
+    quota_simulation_runtime_seconds: int = 300
+    global_concurrent_simulations: int = 20
+    quota_export_rows: int = 10_000
+    idempotency_retention_hours: int = 24
+    cleanup_interval_seconds: int = 60
 
     # Delivery engine bounds.
     delivery_timeout_seconds: float = 10.0

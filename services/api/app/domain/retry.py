@@ -16,6 +16,10 @@ class RetryPolicySpec(BaseModel):
     jitter: Literal["none", "full", "equal"] = "full"
     retry_on_status: list[int] = Field(default_factory=lambda: list(DEFAULT_RETRY_STATUSES), max_length=50)
     retry_on_network_errors: bool = True
+    # Total time the worker waits for a response before recording a timeout.
+    timeout_ms: int = Field(5_000, ge=200, le=10_000)
+    # Honor a Retry-After header on 429/503 (bounded by max_delay_ms).
+    respect_retry_after: bool = True
 
     @model_validator(mode="after")
     def _check(self) -> "RetryPolicySpec":
@@ -51,6 +55,15 @@ def retry_delay_ms(policy: RetryPolicySpec, failed_attempt: int, rng: random.Ran
     if policy.jitter == "equal":
         return int(base / 2 + rng.uniform(0, base / 2))
     return base
+
+
+def delay_after_failure(
+    policy: RetryPolicySpec, failed_attempt: int, retry_after_s: float | None, rng: random.Random | None = None
+) -> int:
+    delay = retry_delay_ms(policy, failed_attempt, rng)
+    if policy.respect_retry_after and retry_after_s is not None:
+        delay = max(delay, min(int(retry_after_s * 1000), policy.max_delay_ms))
+    return delay
 
 
 def is_retryable(policy: RetryPolicySpec, status: int | None, error_category: str | None) -> bool:
