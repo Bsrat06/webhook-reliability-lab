@@ -4,6 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Query
 
 from app.api.deps import DB, CurrentWorkspace
+from app.domain.retry import RetryPolicySpec
 from app.schemas import (
     AttemptOut,
     DeliveryOut,
@@ -51,7 +52,7 @@ def list_events(
             idempotency_key=e.idempotency_key,
             correlation_id=e.correlation_id,
             source=e.source,
-            status=svc.aggregate_status([d.status for d in ds]),
+            status=svc.aggregate_status(ds),
             deliveries=[DeliverySummary.model_validate(d) for d in ds],
         )
         for e, ds in rows
@@ -76,12 +77,12 @@ def _detail(data: dict) -> EventDetail:
         correlation_id=ev.correlation_id,
         source=ev.source,
         created_at=ev.created_at,
-        status=svc.aggregate_status([d.status for d in data["deliveries"]]),
+        status=svc.aggregate_status(data["deliveries"]),
         deliveries=[
             DeliveryOut(
                 **DeliverySummary.model_validate(d).model_dump(),
                 endpoint_name=data["endpoints"][d.endpoint_id].name,
-                retry_policy=d.retry_policy,
+                retry_policy=RetryPolicySpec.model_validate(d.retry_policy).model_dump(),
                 replay_of_delivery_id=d.replay_of_delivery_id,
                 created_at=d.created_at,
                 dead_letter_reason=dead.get(d.id),

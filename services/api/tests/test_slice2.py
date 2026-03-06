@@ -180,6 +180,7 @@ def test_dead_letter_inspect_replay_with_lineage(guest, live_server):
     assert new["id"] == replay["id"] and new["replay_of_delivery_id"] == original["id"]
     assert new["status"] == "succeeded" and new["retry_policy"]["max_attempts"] == 4
     assert len(event["attempts"]) == 2
+    assert event["status"] == "delivered"  # judged by the replay, not the superseded original
 
     after = guest.get("/api/v1/dead-letters?state=resolved").json()["items"][0]
     assert after["resolution_note"].startswith("Replayed as delivery") and after["replays"][0]["id"] == new["id"]

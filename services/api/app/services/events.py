@@ -114,7 +114,10 @@ def create_event(
     return event
 
 
-def aggregate_status(statuses: list[str]) -> str:
+def aggregate_status(deliveries: list[Delivery]) -> str:
+    """Status of an event, judged by the latest delivery in each replay chain (replayed originals are superseded)."""
+    replayed = {d.replay_of_delivery_id for d in deliveries if d.replay_of_delivery_id}
+    statuses = [d.status for d in deliveries if d.id not in replayed]
     if not statuses:
         return "no_deliveries"
     if any(s not in TERMINAL_DELIVERY_STATUSES for s in statuses):
