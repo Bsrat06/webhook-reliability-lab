@@ -1,14 +1,14 @@
 from datetime import timedelta
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 from sqlalchemy import func, select
 
 from app.api.deps import DB, CurrentWorkspace, current_workspace
 from app.api.ratelimit import guest_session_limiter
 from app.core.config import get_settings
 from app.core.errors import ServiceError
-from app.models import Endpoint, Event, Job, WorkerHeartbeat
-from app.schemas import SessionOut, WorkspaceOut
+from app.models import AuditEvent, Endpoint, Event, Job, WorkerHeartbeat
+from app.schemas import AuditOut, SessionOut, WorkspaceOut
 from app.services.guest import create_guest_session
 
 router = APIRouter(prefix="/api/v1", tags=["session"])
@@ -78,3 +78,11 @@ def start_guest_session(request: Request, response: Response, db: DB) -> Session
 @router.get("/session", response_model=SessionOut)
 def get_session(ws: CurrentWorkspace, db: DB) -> SessionOut:
     return _session_payload(db, ws)
+
+
+@router.get("/workspaces/current/audit", response_model=list[AuditOut])
+def list_audit(ws: CurrentWorkspace, db: DB, limit: int = Query(50, ge=1, le=200), before_id: int | None = None):
+    stmt = select(AuditEvent).where(AuditEvent.workspace_id == ws.id)
+    if before_id:
+        stmt = stmt.where(AuditEvent.id < before_id)
+    return list(db.scalars(stmt.order_by(AuditEvent.id.desc()).limit(limit)))

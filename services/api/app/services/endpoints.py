@@ -8,7 +8,8 @@ from app.core.errors import ServiceError, not_found, quota_exceeded
 from app.core.security import encrypt_secret, new_endpoint_secret
 from app.domain.receiver import ReceiverBehavior
 from app.domain.retry import DEFAULT_POLICY, RetryPolicySpec
-from app.models import Endpoint, Workspace
+from app.models import Endpoint, IdempotencyRecord, Workspace
+from app.services.audit import audit
 
 
 def get_endpoint(db: Session, ws: Workspace, endpoint_id: uuid.UUID) -> Endpoint:
@@ -57,7 +58,7 @@ def create_endpoint(
     return ep, secret
 
 
-def update_endpoint(db: Session, ws: Workspace, endpoint_id: uuid.UUID, changes: dict) -> Endpoint:
+def update_endpoint(db: Session, ws: Workspace, endpoint_id: uuid.UUID, changes: dict, actor: str = "system") -> Endpoint:
     ep = get_endpoint(db, ws, endpoint_id)
     for field in ("name", "description", "enabled"):
         if changes.get(field) is not None:
@@ -66,19 +67,35 @@ def update_endpoint(db: Session, ws: Workspace, endpoint_id: uuid.UUID, changes:
         ep.receiver_config = ReceiverBehavior.model_validate(changes["receiver_config"]).model_dump()
     if changes.get("retry_policy") is not None:
         ep.retry_policy = RetryPolicySpec.model_validate(changes["retry_policy"]).model_dump()
+    audit(db, ws.id, actor, "endpoint.updated", "endpoint", ep.id, fields=sorted(k for k, v in changes.items() if v is not None))
     db.commit()
     db.refresh(ep)
     return ep
 
 
-def rotate_secret(db: Session, ws: Workspace, endpoint_id: uuid.UUID) -> str:
+def rotate_secret(db: Session, ws: Workspace, endpoint_id: uuid.UUID, actor: str = "system") -> str:
     ep = get_endpoint(db, ws, endpoint_id)
     secret = new_endpoint_secret()
     ep.secret_ciphertext = encrypt_secret(secret)
+    audit(db, ws.id, actor, "endpoint.secret_rotated", "endpoint", ep.id)
     db.commit()
     return secret
 
 
-def delete_endpoint(db: Session, ws: Workspace, endpoint_id: uuid.UUID) -> None:
-    db.delete(get_endpoint(db, ws, endpoint_id))
+def delete_endpoint(db: Session, ws: Workspace, endpoint_id: uuid.UUID, actor: str = "system") -> None:
+    ep = get_endpoint(db, ws, endpoint_id)
+    audit(db, ws.id, actor, "endpoint.deleted", "endpoint", ep.id, name=ep.name)
+    db.delete(ep)
     db.commit()
+
+
+def idempotency_records(db: Session, ws: Workspace, endpoint_id: uuid.UUID, limit: int) -> list[IdempotencyRecord]:
+    get_endpoint(db, ws, endpoint_id)
+    return list(
+        db.scalars(
+            select(IdempotencyRecord)
+            .where(IdempotencyRecord.workspace_id == ws.id, IdempotencyRecord.endpoint_id == endpoint_id)
+            .order_by(IdempotencyRecord.last_seen_at.desc())
+            .limit(limit)
+        )
+    )

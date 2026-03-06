@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api.routes import endpoints, events, receiver, session
+from app.api.routes import deliveries, endpoints, events, receiver, session
 from app.core.config import get_settings
 from app.core.errors import ServiceError
 from app.db.session import engine
@@ -74,5 +74,5 @@ def ready():
     return {"status": "ok", "database": "up"}
 
 
-for r in (session.router, endpoints.router, events.router, receiver.router):
+for r in (session.router, endpoints.router, events.router, deliveries.router, receiver.router):
     app.include_router(r)

@@ -32,6 +32,8 @@ def current_workspace(request: Request, db: DB) -> Workspace:
     if row is None or row.GuestSession.expires_at <= now:
         raise api_error(401, "session_expired", "Your session has expired. Start a new guest session.")
     sess, ws = row.GuestSession, row.Workspace
+    request.state.actor = f"guest_session:{str(sess.id)[:8]}"
+    request.state.session_id = sess.id
     # Sliding inactivity window; throttle writes to once a minute.
     if now - sess.last_seen_at > timedelta(seconds=60):
         expiry = now + timedelta(hours=settings.guest_retention_hours)
@@ -42,3 +44,10 @@ def current_workspace(request: Request, db: DB) -> Workspace:
 
 
 CurrentWorkspace = Annotated[Workspace, Depends(current_workspace)]
+
+
+def current_actor(request: Request, _: CurrentWorkspace) -> str:
+    return request.state.actor
+
+
+Actor = Annotated[str, Depends(current_actor)]

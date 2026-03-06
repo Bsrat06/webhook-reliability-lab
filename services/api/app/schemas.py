@@ -144,3 +144,81 @@ class EventDetail(BaseModel):
     deliveries: list[DeliveryOut]
     attempts: list[AttemptOut]
     transitions: list[TransitionOut]
+
+
+ReplayPolicyChoice = Literal["original", "endpoint", "fast", "balanced", "conservative", "custom"]
+
+
+class ReplayIn(BaseModel):
+    policy: ReplayPolicyChoice = "original"
+    retry_policy: RetryPolicySpec | None = None
+
+
+class BulkReplayIn(ReplayIn):
+    delivery_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+    # Must equal the number of selected deliveries: a deliberate confirmation that prevents replay storms.
+    confirm_count: int
+
+
+class ReplayOut(BaseModel):
+    replays: list[DeliverySummary]
+
+
+class ReplayRef(ORM):
+    id: uuid.UUID
+    status: str
+    attempt_count: int
+    created_at: datetime
+
+
+class DeadLetterItem(BaseModel):
+    id: uuid.UUID
+    delivery_id: uuid.UUID
+    event_id: uuid.UUID
+    event_type: str
+    endpoint_id: uuid.UUID
+    endpoint_name: str
+    reason: str
+    attempt_count: int
+    last_error_category: str | None
+    last_status: int | None
+    created_at: datetime
+    resolved_at: datetime | None
+    resolution_note: str | None
+    replays: list[ReplayRef]
+
+
+class DeadLetterList(BaseModel):
+    items: list[DeadLetterItem]
+    counts: dict[str, int]
+    next_before: datetime | None
+
+
+class DeadLetterDetail(DeadLetterItem):
+    payload: dict
+    retry_policy: dict
+    attempts: list[AttemptOut]
+
+
+class ResolveIn(BaseModel):
+    note: str = Field("", max_length=500)
+
+
+class IdempotencyRecordOut(ORM):
+    idempotency_key: str
+    first_delivery_id: uuid.UUID | None
+    first_seen_at: datetime
+    last_seen_at: datetime
+    seen_count: int
+    processing_result: str
+    expires_at: datetime
+
+
+class AuditOut(ORM):
+    id: int
+    actor: str
+    action: str
+    resource_type: str
+    resource_id: str | None
+    metadata: dict = Field(validation_alias="metadata_")
+    created_at: datetime
