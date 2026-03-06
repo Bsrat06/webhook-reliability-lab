@@ -4,6 +4,8 @@ from fastapi import APIRouter, Query, Response
 from sqlalchemy import func, select
 
 from app.api.deps import DB, Actor, CurrentWorkspace
+from app.domain.receiver import ReceiverBehavior
+from app.domain.retry import RetryPolicySpec
 from app.models import Delivery
 from app.schemas import EndpointCreated, EndpointIn, EndpointOut, EndpointPatch, IdempotencyRecordOut
 from app.services.audit import audit
@@ -23,7 +25,17 @@ def _with_stats(db, ws, eps) -> list[EndpointOut]:
         )
         for ep_id, status, n in rows:
             stats[ep_id][status] = n
-    return [EndpointOut.model_validate(e).model_copy(update={"stats": stats[e.id]}) for e in eps]
+    # Normalize stored configs so older rows gain defaults for fields added later.
+    return [
+        EndpointOut.model_validate(e).model_copy(
+            update={
+                "stats": stats[e.id],
+                "receiver_config": ReceiverBehavior.model_validate(e.receiver_config).model_dump(),
+                "retry_policy": RetryPolicySpec.model_validate(e.retry_policy).model_dump(),
+            }
+        )
+        for e in eps
+    ]
 
 
 @router.get("", response_model=list[EndpointOut])
