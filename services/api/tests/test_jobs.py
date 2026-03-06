@@ -19,6 +19,9 @@ def _send_many(c, n):
 
 def test_concurrent_claims_never_overlap(guest):
     _send_many(guest, 30)
+    # Lift the per-workspace limit: this test is about overlap safety, not concurrency caps.
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE jobs SET concurrency_key = NULL"))
     claimed: list = []
     lock = threading.Lock()
     barrier = threading.Barrier(5)

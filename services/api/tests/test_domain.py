@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from app.core.security import sign_payload, verify_signature
 from app.domain.receiver import ReceiverBehavior, decide
-from app.domain.retry import RetryPolicySpec, base_delay_ms, is_retryable, retry_delay_ms
+from app.domain.retry import RetryPolicySpec, base_delay_ms, delay_after_failure, is_retryable, retry_delay_ms
 
 
 def test_backoff_grows_and_caps():
@@ -55,3 +55,39 @@ def test_signature_roundtrip():
     assert not verify_signature("s3cret", b"tampered", sig)
     assert not verify_signature("other", b"body", sig)
     assert not verify_signature("s3cret", b"body", "garbage")
+
+
+def test_failure_mix_follows_weights_and_is_seeded():
+    b = ReceiverBehavior(
+        mode="random",
+        failure_rate=1.0,
+        failure_mix={"server_error": 1, "rate_limited": 1, "timeout": 0, "connection_drop": 2},
+        seed=7,
+    )
+    kinds = [decide(b, f"e{i}", 1).kind for i in range(400)]
+    assert kinds == [decide(b, f"e{i}", 1).kind for i in range(400)]
+    assert "timeout" not in kinds
+    assert 150 < kinds.count("connection_drop") < 250
+    assert all(decide(b, f"e{i}", 1).status == 429 for i in range(400) if kinds[i] == "rate_limited")
+
+
+def test_fixed_failure_kinds():
+    assert decide(ReceiverBehavior(mode="fail", failure_status=400), "e", 1).kind == "client_error"
+    assert decide(ReceiverBehavior(mode="fail", failure_kind="timeout"), "e", 1).kind == "timeout"
+    assert decide(ReceiverBehavior(mode="fail_first_n", fail_first_n=1), "e", 2).kind is None
+    with pytest.raises(ValidationError):
+        ReceiverBehavior(mode="random", failure_mix={"server_error": 0})
+
+
+def test_ack_loss_only_applies_to_successes():
+    b = ReceiverBehavior(mode="succeed", ack_loss_rate=1.0)
+    assert decide(b, "e", 1).ack_lost
+    assert not decide(b.model_copy(update={"mode": "fail"}), "e", 1).ack_lost
+
+
+def test_retry_after_raises_delay_but_respects_cap():
+    p = RetryPolicySpec(initial_delay_ms=100, max_delay_ms=2_000, jitter="none")
+    assert delay_after_failure(p, 1, None) == 100
+    assert delay_after_failure(p, 1, 1.5) == 1_500
+    assert delay_after_failure(p, 1, 60) == 2_000
+    assert delay_after_failure(p.model_copy(update={"respect_retry_after": False}), 1, 60) == 100
