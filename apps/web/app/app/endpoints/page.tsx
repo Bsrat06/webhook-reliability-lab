@@ -3,8 +3,15 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { del, errorText, fetcher, patch, post } from "@/lib/api";
-import type { Endpoint, ReceiverConfig, RetryPolicy } from "@/lib/types";
-import { Button, ErrorNote, Field, Mono, SectionHeader, Status, fmtMs, inputCls } from "@/components/ui";
+import type { Endpoint, FailureKind, FailureMix, IdempotencyRecord, ReceiverConfig, RetryPolicy } from "@/lib/types";
+import { Button, ErrorNote, Field, Mono, Status, fmtDateTime, fmtMs, inputCls } from "@/components/ui";
+
+const FAILURE_KINDS: { value: FailureKind; label: string }[] = [
+  { value: "server_error", label: "HTTP error status" },
+  { value: "rate_limited", label: "429 rate limited (with Retry-After)" },
+  { value: "timeout", label: "Timeout (never answers in time)" },
+  { value: "connection_drop", label: "Connection dropped mid-response" },
+];
 
 const POLICY_PRESETS: Record<string, Partial<RetryPolicy>> = {
   Fast: { max_attempts: 4, initial_delay_ms: 500, multiplier: 2, max_delay_ms: 4000, jitter: "full" },
@@ -46,7 +53,8 @@ export default function EndpointsPage() {
       <p className="max-w-prose text-[13px] text-ink-2">
         Built-in receivers are real HTTP endpoints hosted by the platform. Every delivery is signed with HMAC-SHA256 and
         verified by the receiver, which then responds according to its behavior below. External HTTPS destinations
-        are disabled on this deployment until SSRF protections are in place.
+        are disabled on this deployment until SSRF protections are in place. Delivery is at-least-once: retries and
+        lost acknowledgements can deliver the same event more than once, so receivers should be idempotent.
       </p>
       <ErrorNote>{createErr}</ErrorNote>
       {secret ? (
@@ -127,53 +135,72 @@ function EndpointCard({ ep, onChange, onSecret }: { ep: Endpoint; onChange: () =
       <div className="grid gap-6 p-4 lg:grid-cols-2">
         <fieldset className="flex flex-col gap-3">
           <legend className="mb-2 text-[13px] font-semibold">Receiver behavior</legend>
-          <Field label="Responds with">
-            <select className={inputCls} value={rc.mode} onChange={(e) => setRc({ ...rc, mode: e.target.value as ReceiverConfig["mode"] })}>
+          <Field label="Responds with" htmlFor={`${ep.id}-mode`}>
+            <select id={`${ep.id}-mode`} className={inputCls} value={rc.mode} onChange={(e) => setRc({ ...rc, mode: e.target.value as ReceiverConfig["mode"] })}>
               <option value="succeed">Always 200 OK</option>
               <option value="fail">Always fail</option>
               <option value="fail_first_n">Fail the first N attempts, then 200</option>
               <option value="random">Fail randomly (seeded)</option>
             </select>
           </Field>
-          {rc.mode !== "succeed" ? (
+          {rc.mode === "fail" || rc.mode === "fail_first_n" ? (
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Failure status">
-                <select className={inputCls} value={rc.failure_status} onChange={(e) => setRc({ ...rc, failure_status: Number(e.target.value) })}>
-                  {[500, 502, 503, 504, 429, 408, 400, 401, 404, 410, 422].map((s) => (
-                    <option key={s} value={s}>
-                      {s}
+              <Field label="Fails by" htmlFor={`${ep.id}-kind`}>
+                <select id={`${ep.id}-kind`} className={inputCls} value={rc.failure_kind} onChange={(e) => setRc({ ...rc, failure_kind: e.target.value as FailureKind })}>
+                  {FAILURE_KINDS.map((k) => (
+                    <option key={k.value} value={k.value}>
+                      {k.label}
                     </option>
                   ))}
                 </select>
               </Field>
+              {rc.failure_kind === "server_error" ? <StatusSelect id={`${ep.id}-status`} rc={rc} setRc={setRc} /> : null}
               {rc.mode === "fail_first_n" ? (
-                <Field label="Failing attempts (N)">
-                  <input type="number" min={0} max={15} className={inputCls} value={rc.fail_first_n} onChange={(e) => setRc({ ...rc, fail_first_n: num(e.target.value) })} />
+                <Field label="Failing attempts (N)" htmlFor={`${ep.id}-n`}>
+                  <input id={`${ep.id}-n`} type="number" min={0} max={15} className={inputCls} value={rc.fail_first_n} onChange={(e) => setRc({ ...rc, fail_first_n: num(e.target.value) })} />
                 </Field>
-              ) : null}
-              {rc.mode === "random" ? (
-                <>
-                  <Field label="Failure rate (%)">
-                    <input type="number" min={0} max={100} className={inputCls} value={Math.round(rc.failure_rate * 100)} onChange={(e) => setRc({ ...rc, failure_rate: num(e.target.value) / 100 })} />
-                  </Field>
-                  <Field label="Seed" hint="Same seed, same event and attempt give the same decision.">
-                    <input type="number" min={0} className={inputCls} value={rc.seed} onChange={(e) => setRc({ ...rc, seed: num(e.target.value) })} />
-                  </Field>
-                </>
               ) : null}
             </div>
           ) : null}
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Latency min (ms)">
-              <input type="number" min={0} max={15000} className={inputCls} value={rc.latency_ms_min} onChange={(e) => setRc({ ...rc, latency_ms_min: num(e.target.value) })} />
+          {rc.mode === "random" ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Failure rate (%)" htmlFor={`${ep.id}-rate`}>
+                  <input id={`${ep.id}-rate`} type="number" min={0} max={100} className={inputCls} value={Math.round(rc.failure_rate * 100)} onChange={(e) => setRc({ ...rc, failure_rate: num(e.target.value) / 100 })} />
+                </Field>
+                <Field label="Seed" htmlFor={`${ep.id}-seed`} hint="Same seed, event and attempt give the same decision.">
+                  <input id={`${ep.id}-seed`} type="number" min={0} className={inputCls} value={rc.seed} onChange={(e) => setRc({ ...rc, seed: num(e.target.value) })} />
+                </Field>
+                <StatusSelect id={`${ep.id}-status`} rc={rc} setRc={setRc} />
+              </div>
+              <MixEditor mix={rc.failure_mix} onChange={(m) => setRc({ ...rc, failure_mix: m })} />
+            </>
+          ) : null}
+          {rc.mode !== "succeed" ? (
+            <Field label="Retry-After on 429 (seconds)" htmlFor={`${ep.id}-ra`}>
+              <input id={`${ep.id}-ra`} type="number" min={0} max={30} className={inputCls} value={rc.retry_after_s} onChange={(e) => setRc({ ...rc, retry_after_s: num(e.target.value) })} />
             </Field>
-            <Field label="Latency max (ms)">
-              <input type="number" min={0} max={15000} className={inputCls} value={rc.latency_ms_max} onChange={(e) => setRc({ ...rc, latency_ms_max: num(e.target.value) })} />
+          ) : null}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Latency min (ms)" htmlFor={`${ep.id}-lmin`}>
+              <input id={`${ep.id}-lmin`} type="number" min={0} max={5000} className={inputCls} value={rc.latency_ms_min} onChange={(e) => setRc({ ...rc, latency_ms_min: num(e.target.value) })} />
+            </Field>
+            <Field label="Latency max (ms)" htmlFor={`${ep.id}-lmax`}>
+              <input id={`${ep.id}-lmax`} type="number" min={0} max={5000} className={inputCls} value={rc.latency_ms_max} onChange={(e) => setRc({ ...rc, latency_ms_max: num(e.target.value) })} />
             </Field>
           </div>
-          <p className="text-[12px] text-ink-3">
-            Deliveries time out after 10 s. A latency above that produces a real timeout.
-          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Lost acknowledgements (%)" htmlFor={`${ep.id}-ack`} hint="Processed, but the response is dropped, so the sender retries a delivery that already succeeded.">
+              <input id={`${ep.id}-ack`} type="number" min={0} max={100} className={inputCls} value={Math.round(rc.ack_loss_rate * 100)} onChange={(e) => setRc({ ...rc, ack_loss_rate: num(e.target.value) / 100 })} />
+            </Field>
+            <label className="flex items-start gap-2 pt-5 text-[13px]">
+              <input type="checkbox" checked={rc.idempotency} onChange={(e) => setRc({ ...rc, idempotency: e.target.checked })} />
+              <span>
+                Idempotent receiver
+                <span className="block text-[12px] text-ink-3">Deduplicates on the Idempotency-Key header, or the event ID.</span>
+              </span>
+            </label>
+          </div>
         </fieldset>
 
         <fieldset className="flex flex-col gap-3">
@@ -213,6 +240,15 @@ function EndpointCard({ ep, onChange, onSecret }: { ep: Endpoint; onChange: () =
                 <option value="n">No</option>
               </select>
             </Field>
+            <Field label="Request timeout (ms)">
+              <input type="number" min={200} max={10000} step={100} className={inputCls} value={rp.timeout_ms} onChange={(e) => setRp({ ...rp, timeout_ms: num(e.target.value) })} />
+            </Field>
+            <Field label="Honor Retry-After">
+              <select className={inputCls} value={rp.respect_retry_after ? "y" : "n"} onChange={(e) => setRp({ ...rp, respect_retry_after: e.target.value === "y" })}>
+                <option value="y">Yes (capped at max delay)</option>
+                <option value="n">No</option>
+              </select>
+            </Field>
           </div>
           <Field label="Retryable status codes" hint="Other non-2xx responses are permanent failures and go straight to the dead-letter queue.">
             <input
@@ -224,6 +260,8 @@ function EndpointCard({ ep, onChange, onSecret }: { ep: Endpoint; onChange: () =
           <Schedule p={rp} />
         </fieldset>
       </div>
+
+      <IdempotencyRecords endpointId={ep.id} enabled={ep.receiver_config.idempotency} />
 
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-rule px-4 py-2">
         <div className="flex flex-wrap items-center gap-3 text-[12px] text-ink-2">
@@ -249,6 +287,91 @@ function EndpointCard({ ep, onChange, onSecret }: { ep: Endpoint; onChange: () =
         </div>
       </footer>
     </article>
+  );
+}
+
+function StatusSelect({ id, rc, setRc }: { id: string; rc: ReceiverConfig; setRc: (r: ReceiverConfig) => void }) {
+  return (
+    <Field label="Error status" htmlFor={id} hint={rc.failure_status < 500 ? "4xx responses are not retried by default." : undefined}>
+      <select id={id} className={inputCls} value={rc.failure_status} onChange={(e) => setRc({ ...rc, failure_status: Number(e.target.value) })}>
+        {[500, 502, 503, 504, 408, 400, 401, 404, 410, 422].map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+function MixEditor({ mix, onChange }: { mix: FailureMix; onChange: (m: FailureMix) => void }) {
+  const total = Object.values(mix).reduce((a, b) => a + b, 0);
+  return (
+    <fieldset className="flex flex-col gap-1">
+      <legend className="text-[12px] font-medium text-ink-2">When an attempt fails, it fails as (relative weights)</legend>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {FAILURE_KINDS.map((k) => (
+          <label key={k.value} className="flex flex-col gap-0.5 text-[12px] text-ink-2">
+            {k.label.split(" (")[0]}
+            <input
+              type="number"
+              min={0}
+              max={100}
+              className={inputCls}
+              value={mix[k.value]}
+              onChange={(e) => onChange({ ...mix, [k.value]: e.target.value === "" ? 0 : Number(e.target.value) })}
+            />
+            <span className="font-mono text-ink-3">{total > 0 ? Math.round((mix[k.value] / total) * 100) : 0}%</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function IdempotencyRecords({ endpointId, enabled }: { endpointId: string; enabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const { data, error } = useSWR<IdempotencyRecord[]>(open ? `/endpoints/${endpointId}/idempotency-records?limit=25` : null, fetcher, {
+    refreshInterval: open ? 3000 : 0,
+  });
+  return (
+    <details className="border-t border-rule px-4 py-2" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="cursor-pointer text-[13px] font-medium">Processed idempotency keys</summary>
+      <div className="flex flex-col gap-2 py-2 text-[12px]">
+        <p className="text-ink-2">
+          {enabled
+            ? "Keys this receiver has processed. A unique database constraint on (receiver, key) guarantees each key is processed once, even when duplicates arrive concurrently. Keys expire after 24 hours."
+            : "Idempotency is off for this receiver, so duplicates are processed again. Turn it on above to see suppression."}{" "}
+          This only demonstrates the pattern. The platform cannot make a third-party receiver idempotent.
+        </p>
+        {error ? <ErrorNote>{errorText(error)}</ErrorNote> : null}
+        {data && data.length === 0 ? <p className="text-ink-3">No keys recorded yet.</p> : null}
+        {data && data.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[480px] text-left">
+              <thead className="text-ink-3">
+                <tr>
+                  <th className="py-1 pr-3 font-medium">Key</th>
+                  <th className="py-1 pr-3 font-medium">Received</th>
+                  <th className="py-1 pr-3 font-medium">Processed</th>
+                  <th className="py-1 font-medium">Last seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((r) => (
+                  <tr key={r.idempotency_key} className="border-t border-rule">
+                    <td className="py-1 pr-3 font-mono break-all">{r.idempotency_key}</td>
+                    <td className="py-1 pr-3 font-mono">{r.seen_count}×</td>
+                    <td className="py-1 pr-3">once{r.seen_count > 1 ? `, ${r.seen_count - 1} suppressed` : ""}</td>
+                    <td className="py-1">{fmtDateTime(r.last_seen_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

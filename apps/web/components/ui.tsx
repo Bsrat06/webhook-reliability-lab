@@ -62,6 +62,18 @@ export function Status({ value, compact }: { value: string; compact?: boolean })
 }
 
 export function Field({ label, hint, children, htmlFor }: { label: string; hint?: ReactNode; children: ReactNode; htmlFor?: string }) {
+  if (!htmlFor) {
+    // Without an explicit id, nest the control in the label so it is still programmatically labelled.
+    return (
+      <div className="flex flex-col gap-1">
+        <label className="flex flex-col gap-1">
+          <span className="text-[12px] font-medium text-ink-2">{label}</span>
+          {children}
+        </label>
+        {hint ? <p className="text-[12px] text-ink-3">{hint}</p> : null}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-1">
       <label htmlFor={htmlFor} className="text-[12px] font-medium text-ink-2">
