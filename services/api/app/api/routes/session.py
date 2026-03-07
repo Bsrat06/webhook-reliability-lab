@@ -7,7 +7,7 @@ from app.api.deps import DB, CurrentWorkspace, current_workspace
 from app.api.ratelimit import guest_session_limiter
 from app.core.config import get_settings
 from app.core.errors import ServiceError
-from app.models import AuditEvent, Endpoint, Event, Job, WorkerHeartbeat
+from app.models import AuditEvent, DeadLetter, Delivery, Endpoint, Event, Job, WorkerHeartbeat
 from app.schemas import AuditOut, SessionOut, WorkspaceOut
 from app.services.guest import create_guest_session
 
@@ -21,6 +21,18 @@ def _session_payload(db, ws) -> SessionOut:
         select(func.count())
         .select_from(Event)
         .where(Event.workspace_id == ws.id, Event.created_at >= func.now() - timedelta(hours=1))
+    )
+    dead_open = db.scalar(
+        select(func.count()).select_from(DeadLetter).where(DeadLetter.workspace_id == ws.id, DeadLetter.resolved_at.is_(None))
+    )
+    replays_hour = db.scalar(
+        select(func.count())
+        .select_from(Delivery)
+        .where(
+            Delivery.workspace_id == ws.id,
+            Delivery.replay_of_delivery_id.is_not(None),
+            Delivery.created_at >= func.now() - timedelta(hours=1),
+        )
     )
     last_beat = db.scalar(select(func.max(WorkerHeartbeat.last_seen_at)))
     db_now = db.scalar(select(func.now()))
@@ -37,8 +49,16 @@ def _session_payload(db, ws) -> SessionOut:
             "endpoints": s.quota_endpoints,
             "payload_bytes": s.quota_payload_bytes,
             "events_per_hour": s.quota_events_per_hour,
+            "replays_per_hour": s.quota_replays_per_hour,
+            "bulk_replay": s.quota_bulk_replay,
+            "workspace_concurrency": s.quota_workspace_concurrency,
         },
-        usage={"endpoints": endpoints, "events_last_hour": events_hour},
+        usage={
+            "endpoints": endpoints,
+            "events_last_hour": events_hour,
+            "replays_last_hour": replays_hour,
+            "dead_letters_open": dead_open,
+        },
         worker={
             "online": worker_online,
             "last_heartbeat_at": last_beat.isoformat() if last_beat else None,
