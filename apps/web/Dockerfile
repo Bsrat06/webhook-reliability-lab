@@ -5,7 +5,7 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
 ARG API_INTERNAL_URL=http://api:8000
-ENV API_INTERNAL_URL=$API_INTERNAL_URL
+ENV API_INTERNAL_URL=$API_INTERNAL_URL NEXT_STANDALONE=1
 RUN pnpm build
 
 FROM node:22-alpine
