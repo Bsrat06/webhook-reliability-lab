@@ -2,6 +2,8 @@ import threading
 import time
 from collections import defaultdict, deque
 
+from app.core.config import get_settings
+
 
 class SlidingWindowLimiter:
     """Per-process limiter. Adequate for a single API instance; swap for Redis when scaling out."""
@@ -24,4 +26,4 @@ class SlidingWindowLimiter:
             return True
 
 
-guest_session_limiter = SlidingWindowLimiter(limit=10, window_seconds=600)
+guest_session_limiter = SlidingWindowLimiter(limit=get_settings().guest_sessions_per_ip, window_seconds=600)

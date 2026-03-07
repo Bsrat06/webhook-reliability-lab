@@ -18,6 +18,8 @@ class Settings(BaseSettings):
 
     session_cookie_name: str = "wh_session"
     guest_retention_hours: int = 24
+    # New guest sessions allowed per client IP per 10 minutes.
+    guest_sessions_per_ip: int = 10
 
     # Guest quotas (spec §2.4); configurable per environment.
     quota_endpoints: int = 5
