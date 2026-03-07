@@ -40,6 +40,8 @@ def _created() -> Mapped[datetime]:
 DELIVERY_STATUSES = ("pending", "processing", "retry_scheduled", "succeeded", "dead_lettered", "cancelled")
 TERMINAL_DELIVERY_STATUSES = ("succeeded", "dead_lettered", "cancelled")
 JOB_STATUSES = ("queued", "running", "succeeded", "failed")
+SIMULATION_STATUSES = ("running", "completed", "cancelled", "timed_out")
+ACTIVE_SIMULATION_STATUSES = ("running",)
 
 
 def _in(col: str, values: tuple[str, ...]) -> str:
@@ -105,8 +107,14 @@ class Event(Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(200))
     correlation_id: Mapped[str] = mapped_column(String(64), nullable=False)
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    simulation_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("simulation_runs.id", ondelete="CASCADE")
+    )
     created_at: Mapped[datetime] = _created()
-    __table_args__ = (Index("ix_events_ws_created", "workspace_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_events_ws_created", "workspace_id", "created_at"),
+        Index("ix_events_simulation", "simulation_run_id", "created_at"),
+    )
 
 
 class Delivery(Base):
@@ -126,6 +134,11 @@ class Delivery(Base):
     replay_of_delivery_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("deliveries.id", ondelete="SET NULL")
     )
+    simulation_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("simulation_runs.id", ondelete="CASCADE")
+    )
+    # Seeded decision key sent to the built-in receiver for simulation deliveries.
+    simulation_key: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -137,6 +150,7 @@ class Delivery(Base):
         Index("ix_deliveries_event", "event_id"),
         Index("ix_deliveries_endpoint", "endpoint_id"),
         Index("ix_deliveries_replay_of", "replay_of_delivery_id"),
+        Index("ix_deliveries_simulation_status", "simulation_run_id", "status"),
     )
 
 
@@ -274,3 +288,30 @@ class AuditEvent(Base):
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = _created()
     __table_args__ = (Index("ix_audit_ws", "workspace_id", "id"),)
+
+
+class SimulationRun(Base):
+    __tablename__ = "simulation_runs"
+    id: Mapped[uuid.UUID] = _uuid()
+    workspace_id: Mapped[uuid.UUID] = _ws_fk()
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    preset: Mapped[str | None] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
+    # Validated by app.domain.simulation.SimulationConfig.
+    configuration: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    random_seed: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    delivery_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_reason: Mapped[str | None] = mapped_column(Text)
+    # Snapshot computed from persisted deliveries and attempts when the run ends.
+    summary: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (
+        CheckConstraint(_in("status", SIMULATION_STATUSES), name="ck_simulation_status"),
+        CheckConstraint("event_count > 0 AND delivery_count > 0", name="ck_simulation_counts"),
+        Index("ix_simulations_ws", "workspace_id", "created_at"),
+        Index("ix_simulations_status", "status"),
+    )
