@@ -125,6 +125,7 @@ def _prepare(db: Session, job: ClaimedJob, worker_id: str) -> Prepared | None:
         db.add(DeadLetter(workspace_id=d.workspace_id, delivery_id=d.id, reason="Worker failed to complete delivery job"))
         _finish_job(held, "failed", "exceeded max claims")
         db.commit()
+        _after_terminal(db, d.simulation_run_id)
         return None
     ep = db.get(Endpoint, d.endpoint_id)
     ev = db.get(Event, d.event_id)
@@ -133,6 +134,7 @@ def _prepare(db: Session, job: ClaimedJob, worker_id: str) -> Prepared | None:
         d.completed_at = func.now()
         _finish_job(held)
         db.commit()
+        _after_terminal(db, d.simulation_run_id)
         return None
     if d.status != "processing":
         record_transition(db, d, "processing", f"claimed by {worker_id}")
@@ -153,6 +155,10 @@ def _prepare(db: Session, job: ClaimedJob, worker_id: str) -> Prepared | None:
     }
     if ev.idempotency_key:
         headers["idempotency-key"] = ev.idempotency_key
+    if d.simulation_run_id and ep.endpoint_type == "builtin":
+        # The built-in receiver applies the run's stored behavior and seeded decision key.
+        headers["x-simulation-run-id"] = str(d.simulation_run_id)
+        headers["x-webhook-decision-key"] = d.simulation_key or str(ev.id)
     url = ep.destination_url if ep.endpoint_type == "external" else f"{settings.receiver_base_url}/receiver/{ep.id}"
     timeout_ms = RetryPolicySpec.model_validate(d.retry_policy).timeout_ms
     db.commit()
@@ -230,7 +236,15 @@ def _retry_after(r: HttpResult) -> float | None:
 
 
 def _jitter_rng(d: Delivery) -> random.Random:
-    return random.Random()
+    # Simulation retries use seeded jitter so the retry schedule is reproducible too.
+    return random.Random(f"{d.simulation_key}:{d.attempt_count}") if d.simulation_key else random.Random()
+
+
+def _after_terminal(db: Session, run_id: uuid.UUID | None) -> None:
+    if run_id is not None:
+        from app.services.simulations import finalize_if_done
+
+        finalize_if_done(db, run_id)
 
 
 def _record(db: Session, job: ClaimedJob, worker_id: str, p: Prepared, r: HttpResult) -> str:
@@ -297,6 +311,8 @@ def _record(db: Session, job: ClaimedJob, worker_id: str, p: Prepared, r: HttpRe
         db.add(DeadLetter(workspace_id=d.workspace_id, delivery_id=d.id, reason=reason))
     _finish_job(held)
     db.commit()
+    if d.status in TERMINAL_DELIVERY_STATUSES:
+        _after_terminal(db, d.simulation_run_id)
     return outcome
 
 
@@ -308,8 +324,9 @@ def make_client() -> httpx.Client:
 
 def _system_handlers() -> dict:
     from app.services.retention import run_cleanup
+    from app.services.simulations import enforce_deadline
 
-    return {"cleanup": run_cleanup}
+    return {"cleanup": run_cleanup, "simulation_deadline": enforce_deadline}
 
 
 def _process_system_job(session_factory, job: ClaimedJob, worker_id: str) -> str:

@@ -21,6 +21,7 @@ from app.core.security import decrypt_secret, verify_signature
 from app.db.session import SessionLocal
 from app.domain.receiver import Decision, ReceiverBehavior, decide
 from app.models import Endpoint, IdempotencyRecord
+from app.services.simulations import receiver_behavior_for_run
 
 router = APIRouter(tags=["receiver"], include_in_schema=False)
 MAX_BODY = 512 * 1024
@@ -43,12 +44,16 @@ class _DropFilter(logging.Filter):
 logging.getLogger("uvicorn.error").addFilter(_DropFilter())
 
 
-def _load(endpoint_id: uuid.UUID) -> tuple[str, uuid.UUID, dict] | None:
+def _load(endpoint_id: uuid.UUID, simulation_run_id: str | None) -> tuple[str, uuid.UUID, dict] | None:
     with SessionLocal() as db:
         ep = db.get(Endpoint, endpoint_id)
         if ep is None or ep.endpoint_type != "builtin":
             return None
-        return decrypt_secret(ep.secret_ciphertext), ep.workspace_id, ep.receiver_config
+        config = ep.receiver_config
+        if simulation_run_id:
+            # Simulation deliveries use the run's stored behavior and seed (same workspace only).
+            config = receiver_behavior_for_run(db, ep.workspace_id, simulation_run_id) or config
+        return decrypt_secret(ep.secret_ciphertext), ep.workspace_id, config
 
 
 def record_processing(endpoint_id: uuid.UUID, workspace_id: uuid.UUID, key: str, delivery_id: str | None) -> str:
@@ -91,7 +96,7 @@ async def receive(endpoint_id: uuid.UUID, request: Request):
     body = await request.body()
     if len(body) > MAX_BODY:
         return JSONResponse({"error": "payload too large"}, status_code=413)
-    loaded = await run_in_threadpool(_load, endpoint_id)
+    loaded = await run_in_threadpool(_load, endpoint_id, request.headers.get("x-simulation-run-id"))
     if loaded is None:
         return JSONResponse({"error": "unknown receiver"}, status_code=404)
     secret, workspace_id, config = loaded
