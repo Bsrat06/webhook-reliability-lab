@@ -3,13 +3,22 @@
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
-import { ApiError, fetcher } from "@/lib/api";
+import { ApiError, errorText, fetcher, post } from "@/lib/api";
 import type { Attempt, Delivery, EventDetail, Transition } from "@/lib/types";
-import { ErrorNote, Mono, SectionHeader, Status, fmtDateTime, fmtMs, fmtTime, relTime, shortId } from "@/components/ui";
+import { Button, ErrorNote, Mono, SectionHeader, Status, fmtDateTime, fmtMs, fmtTime, relTime, shortId } from "@/components/ui";
+import { ReplayControl } from "@/components/replay";
+
+const TERMINAL = ["succeeded", "dead_lettered", "cancelled"];
+const RECEIVER_RESULT: Record<string, string> = {
+  processed: "Processed by the receiver (first time this key was seen)",
+  duplicate: "Duplicate suppressed: the receiver had already processed this idempotency key",
+  rejected: "Rejected by the receiver before processing",
+  timed_out: "Receiver did not answer in time",
+};
 
 export default function EventInspector({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { data, error } = useSWR<EventDetail>(`/events/${id}`, fetcher, {
+  const { data, error, mutate } = useSWR<EventDetail>(`/events/${id}`, fetcher, {
     refreshInterval: (d) => (!d || d.status === "in_progress" ? 1000 : 0),
   });
   const [selected, setSelected] = useState<string | null>(null);
@@ -60,6 +69,7 @@ export default function EventInspector({ params }: { params: Promise<{ id: strin
               transitions={data.transitions.filter((t) => t.delivery_id === d.id)}
               selected={selected}
               onSelect={setSelected}
+              onChange={() => mutate()}
             />
           ))}
           <details className="rounded-md border border-rule bg-panel">
@@ -92,12 +102,14 @@ function DeliveryTimeline({
   transitions,
   selected,
   onSelect,
+  onChange,
 }: {
   delivery: Delivery;
   attempts: Attempt[];
   transitions: Transition[];
   selected: string | null;
   onSelect: (id: string) => void;
+  onChange: () => void;
 }) {
   const rows = useMemo<Row[]>(() => {
     const r: Row[] = [
@@ -108,19 +120,29 @@ function DeliveryTimeline({
     return r.sort((x, y) => x.at.localeCompare(y.at) || (x.kind === "attempt" ? -1 : 1));
   }, [attempts, transitions]);
   const p = d.retry_policy;
+  const [cancelErr, setCancelErr] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   return (
-    <article className="rounded-md border border-rule bg-panel">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-rule px-3 py-2">
-        <div className="flex items-center gap-2">
-          <span className="text-ink-3">→</span>
-          <span className="font-medium">{d.endpoint_name}</span>
-          <Status value={d.status} />
+    <article id={`delivery-${d.id}`} className="rounded-md border border-rule bg-panel">
+      <header className="flex flex-col gap-1 border-b border-rule px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-ink-3">→</span>
+            <span className="font-medium">{d.endpoint_name}</span>
+            <Status value={d.status} />
+            <Mono className="text-ink-3">{shortId(d.id)}</Mono>
+          </div>
+          <span className="text-[12px] text-ink-3">
+            {d.attempt_count}/{p.max_attempts} attempts · backoff ×{p.multiplier} from {fmtMs(p.initial_delay_ms)}, cap{" "}
+            {fmtMs(p.max_delay_ms)}, {p.jitter} jitter, {fmtMs(p.timeout_ms ?? 5000)} timeout
+          </span>
         </div>
-        <span className="text-[12px] text-ink-3">
-          {d.attempt_count}/{p.max_attempts} attempts · backoff ×{p.multiplier} from {fmtMs(p.initial_delay_ms)}, cap{" "}
-          {fmtMs(p.max_delay_ms)}, {p.jitter} jitter
-        </span>
+        {d.replay_of_delivery_id ? (
+          <a href={`#delivery-${d.replay_of_delivery_id}`} className="text-[12px] text-ink-2 hover:text-ink">
+            ↺ Replay of delivery <Mono>{shortId(d.replay_of_delivery_id)}</Mono>
+          </a>
+        ) : null}
       </header>
       <ol className="flex flex-col px-3 py-2">
         {rows.map((r, i) =>
@@ -158,6 +180,33 @@ function DeliveryTimeline({
           <li className="mt-1 border-l-2 border-bad pl-2 text-[12px] text-bad">Dead-lettered: {d.dead_letter_reason}</li>
         ) : null}
       </ol>
+      <footer className="flex flex-wrap items-start justify-end gap-2 border-t border-rule px-3 py-2">
+        {TERMINAL.includes(d.status) ? (
+          <ReplayControl path={`/deliveries/${d.id}/replay`} onDone={onChange} />
+        ) : (
+          <div className="flex flex-col items-end gap-1">
+            <Button
+              variant="danger"
+              busy={cancelling}
+              onClick={async () => {
+                setCancelling(true);
+                setCancelErr(null);
+                try {
+                  await post(`/deliveries/${d.id}/cancel`);
+                  onChange();
+                } catch (e) {
+                  setCancelErr(errorText(e));
+                } finally {
+                  setCancelling(false);
+                }
+              }}
+            >
+              Cancel delivery
+            </Button>
+            <ErrorNote>{cancelErr}</ErrorNote>
+          </div>
+        )}
+      </footer>
     </article>
   );
 }
@@ -211,6 +260,11 @@ function AttemptInspector({ attempt: a }: { attempt: Attempt }) {
         ))}
       </dl>
       {a.error_message ? <p className="text-[12px] text-ink-2">{a.error_message}</p> : null}
+      {a.response_headers["x-receiver-result"] ? (
+        <p className="border-l-2 border-rule-strong pl-2 text-[12px] text-ink-2">
+          {RECEIVER_RESULT[a.response_headers["x-receiver-result"]] ?? a.response_headers["x-receiver-result"]}
+        </p>
+      ) : null}
       <div className="flex flex-col gap-1">
         <h3 className="text-[12px] font-medium text-ink-2">Request headers</h3>
         <KV data={a.request_headers} />
