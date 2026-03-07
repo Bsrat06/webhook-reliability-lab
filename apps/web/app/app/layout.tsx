@@ -10,6 +10,7 @@ import { Mono, relTime, shortId } from "@/components/ui";
 
 const NAV = [
   { href: "/app/events", label: "Events" },
+  { href: "/app/dead-letters", label: "Dead letters" },
   { href: "/app/endpoints", label: "Endpoints" },
   { href: "/app/workspace", label: "Workspace" },
 ];
@@ -42,6 +43,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 }`}
               >
                 {n.label}
+                {n.href === "/app/dead-letters" && session?.usage.dead_letters_open ? (
+                  <span className="ml-1.5 rounded-sm bg-bad px-1 font-mono text-[11px] text-accent-ink" aria-label={`${session.usage.dead_letters_open} open`}>
+                    {session.usage.dead_letters_open}
+                  </span>
+                ) : null}
               </Link>
             );
           })}
