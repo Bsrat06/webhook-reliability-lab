@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.receiver import ReceiverBehavior
 from app.domain.retry import RetryPolicySpec
+from app.domain.simulation import SimulationConfig
 
 
 class ORM(BaseModel):
@@ -86,6 +87,7 @@ class EventListItem(BaseModel):
     id: uuid.UUID
     event_type: str
     created_at: datetime
+    simulation_run_id: uuid.UUID | None = None
     idempotency_key: str | None
     correlation_id: str
     source: str
@@ -95,7 +97,7 @@ class EventListItem(BaseModel):
 
 class EventList(BaseModel):
     items: list[EventListItem]
-    next_before: datetime | None
+    next_cursor: str | None
 
 
 class AttemptOut(ORM):
@@ -222,3 +224,47 @@ class AuditOut(ORM):
     resource_id: str | None
     metadata: dict = Field(validation_alias="metadata_")
     created_at: datetime
+
+
+class SimulationIn(BaseModel):
+    name: str | None = Field(None, max_length=120)
+    preset: str | None = Field(None, max_length=40)
+    config: SimulationConfig
+
+
+class SimulationOut(ORM):
+    id: uuid.UUID
+    name: str
+    preset: str | None
+    status: str
+    configuration: dict
+    random_seed: int
+    event_count: int
+    delivery_count: int
+    started_at: datetime
+    deadline_at: datetime
+    completed_at: datetime | None
+    end_reason: str | None
+    created_at: datetime
+    summary: dict | None = None
+
+
+class PresetOut(BaseModel):
+    key: str
+    title: str
+    description: str
+    config: dict
+
+
+class CompareIn(BaseModel):
+    run_ids: list[uuid.UUID] = Field(min_length=2, max_length=4)
+
+
+class ConfigDifference(BaseModel):
+    key: str
+    values: list[Any]
+
+
+class CompareOut(BaseModel):
+    runs: list[SimulationOut]
+    config_differences: list[ConfigDifference]

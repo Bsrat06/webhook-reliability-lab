@@ -2,7 +2,7 @@ import json
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -130,17 +130,38 @@ def aggregate_status(deliveries: list[Delivery]) -> str:
 
 
 def list_events(
-    db: Session, ws: Workspace, *, limit: int, before: datetime | None, event_type: str | None, q: str | None
+    db: Session,
+    ws: Workspace,
+    *,
+    limit: int,
+    cursor: tuple[datetime, uuid.UUID] | None = None,
+    event_type: str | None = None,
+    q: str | None = None,
+    source: str | None = None,
+    simulation_run_id: uuid.UUID | None = None,
+    delivery_status: str | None = None,
 ) -> list[tuple[Event, list[Delivery]]]:
     stmt = select(Event).where(Event.workspace_id == ws.id)
-    if before:
-        stmt = stmt.where(Event.created_at < before)
+    if cursor:
+        # Keyset pagination on (created_at, id): bulk-created events share a timestamp.
+        stmt = stmt.where(tuple_(Event.created_at, Event.id) < tuple_(*cursor))
+    if source:
+        stmt = stmt.where(Event.source == source)
+    if simulation_run_id:
+        stmt = stmt.where(Event.simulation_run_id == simulation_run_id)
+    if delivery_status:
+        match = select(Delivery.id).where(Delivery.event_id == Event.id)
+        if delivery_status == "retried":
+            match = match.where(Delivery.attempt_count > 1)
+        else:
+            match = match.where(Delivery.status == delivery_status)
+        stmt = stmt.where(match.exists())
     if event_type:
         stmt = stmt.where(Event.event_type == event_type)
     if q:
         like = f"%{q.replace('%', r'\%').replace('_', r'\_')}%"
         stmt = stmt.where(Event.event_type.ilike(like) | Event.correlation_id.ilike(like) | Event.idempotency_key.ilike(like))
-    events = list(db.scalars(stmt.order_by(Event.created_at.desc()).limit(limit)))
+    events = list(db.scalars(stmt.order_by(Event.created_at.desc(), Event.id.desc()).limit(limit)))
     by_event: dict[uuid.UUID, list[Delivery]] = {e.id: [] for e in events}
     if events:
         for d in db.scalars(select(Delivery).where(Delivery.event_id.in_(by_event.keys()))):

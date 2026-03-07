@@ -7,7 +7,7 @@ from app.api.deps import DB, CurrentWorkspace, current_workspace
 from app.api.ratelimit import guest_session_limiter
 from app.core.config import get_settings
 from app.core.errors import ServiceError
-from app.models import AuditEvent, DeadLetter, Delivery, Endpoint, Event, Job, WorkerHeartbeat
+from app.models import AuditEvent, DeadLetter, Delivery, Endpoint, Event, Job, SimulationRun, WorkerHeartbeat
 from app.schemas import AuditOut, SessionOut, WorkspaceOut
 from app.services.guest import create_guest_session
 
@@ -34,6 +34,14 @@ def _session_payload(db, ws) -> SessionOut:
             Delivery.created_at >= func.now() - timedelta(hours=1),
         )
     )
+    sims_active = db.scalar(
+        select(func.count()).select_from(SimulationRun).where(SimulationRun.workspace_id == ws.id, SimulationRun.status == "running")
+    )
+    sim_events_hour = db.scalar(
+        select(func.coalesce(func.sum(SimulationRun.event_count), 0)).where(
+            SimulationRun.workspace_id == ws.id, SimulationRun.created_at >= func.now() - timedelta(hours=1)
+        )
+    )
     last_beat = db.scalar(select(func.max(WorkerHeartbeat.last_seen_at)))
     db_now = db.scalar(select(func.now()))
     queued = db.execute(
@@ -52,12 +60,18 @@ def _session_payload(db, ws) -> SessionOut:
             "replays_per_hour": s.quota_replays_per_hour,
             "bulk_replay": s.quota_bulk_replay,
             "workspace_concurrency": s.quota_workspace_concurrency,
+            "concurrent_simulations": s.quota_concurrent_simulations,
+            "simulation_events": s.quota_simulation_events,
+            "simulation_events_per_hour": s.quota_simulation_events_per_hour,
+            "simulation_runtime_seconds": s.quota_simulation_runtime_seconds,
         },
         usage={
             "endpoints": endpoints,
             "events_last_hour": events_hour,
             "replays_last_hour": replays_hour,
             "dead_letters_open": dead_open,
+            "simulations_active": sims_active,
+            "simulation_events_last_hour": sim_events_hour,
         },
         worker={
             "online": worker_online,
