@@ -1,9 +1,11 @@
 "use client";
 
-import useSWR from "swr";
-import { fetcher } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import useSWR, { useSWRConfig } from "swr";
+import { errorText, fetcher, post } from "@/lib/api";
 import type { AuditEntry, Session } from "@/lib/types";
-import { ErrorNote, Mono, SectionHeader, fmtDateTime, shortId } from "@/components/ui";
+import { Button, ErrorNote, Mono, SectionHeader, fmtDateTime, inputCls, shortId } from "@/components/ui";
 
 export default function WorkspacePage() {
   const { data } = useSWR<Session>("/session", fetcher);
@@ -81,7 +83,9 @@ export default function WorkspacePage() {
           Deliveries beyond the in-flight limit wait in the durable queue.
         </p>
       </section>
+      <ExportData />
       <AuditLog />
+      <DangerZone />
     </div>
   );
 }
@@ -118,6 +122,99 @@ function AuditLog() {
           ))}
         </ol>
       ) : null}
+    </section>
+  );
+}
+
+const DATASETS = [
+  ["events", "Events", "Payloads, types, idempotency keys and correlation IDs"],
+  ["deliveries", "Deliveries", "Status, attempt counts and replay lineage per endpoint"],
+  ["attempts", "Attempts", "Every HTTP attempt: timing, status, error category, receiver result"],
+  ["dead_letters", "Dead letters", "Failure reasons and resolutions"],
+  ["simulations", "Simulations", "Configuration, seed and result summary of each run"],
+  ["analytics", "Analytics summary", "All-time metrics for this workspace"],
+] as const;
+
+function ExportData() {
+  return (
+    <section className="flex flex-col gap-2">
+      <SectionHeader title="Export data" />
+      <p className="text-[12px] text-ink-3">
+        Exports are limited to 10,000 rows per file; a truncated file says so in its X-Export-Truncated header and JSON
+        body. Signing secrets and request headers are never exported. CSV cells that start with a formula character
+        are prefixed with an apostrophe.
+      </p>
+      <table className="text-[13px]">
+        <tbody>
+          {DATASETS.map(([key, label, hint]) => (
+            <tr key={key} className="border-t border-rule">
+              <td className="py-2 pr-4">
+                {label}
+                <span className="block text-[12px] text-ink-3">{hint}</span>
+              </td>
+              <td className="py-2 text-right whitespace-nowrap">
+                <a className="mr-3 text-accent hover:underline" href={`/api/v1/exports/${key}?format=csv`} download>
+                  CSV<span className="sr-only"> export of {label}</span>
+                </a>
+                <a className="text-accent hover:underline" href={`/api/v1/exports/${key}?format=json`} download>
+                  JSON<span className="sr-only"> export of {label}</span>
+                </a>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function DangerZone() {
+  const router = useRouter();
+  const { mutate } = useSWRConfig();
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  async function act(kind: "reset" | "delete") {
+    setBusy(kind);
+    setErr(null);
+    try {
+      await post(`/workspaces/current/${kind}`, { confirm: kind });
+      if (kind === "delete") {
+        router.replace("/?deleted=1");
+        return;
+      }
+      setTyped("");
+      setDone(true);
+      mutate(() => true);
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+  return (
+    <section className="flex flex-col gap-3 rounded-md border border-bad/40 p-4">
+      <h2 className="text-[13px] font-semibold text-bad">Reset or delete</h2>
+      <p className="text-[13px] text-ink-2">
+        <strong>Reset</strong> permanently deletes every event, delivery, attempt, dead letter, simulation and
+        idempotency key, and replaces your endpoints with one default receiver. Your session and audit log are kept.
+        <strong> Delete</strong> removes the whole workspace now instead of waiting for the retention window.
+      </p>
+      <label className="flex flex-col gap-1 text-[12px] text-ink-2">
+        Type <Mono>reset</Mono> or <Mono>delete</Mono> to confirm
+        <input className={`${inputCls} w-48 font-mono`} value={typed} onChange={(e) => setTyped(e.target.value.trim())} autoComplete="off" />
+      </label>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="danger" disabled={typed !== "reset"} busy={busy === "reset"} onClick={() => act("reset")}>
+          Reset workspace
+        </Button>
+        <Button variant="danger" disabled={typed !== "delete"} busy={busy === "delete"} onClick={() => act("delete")}>
+          Delete workspace now
+        </Button>
+      </div>
+      {done ? <p role="status" className="text-[12px] text-ok">Workspace reset. You can start fresh.</p> : null}
+      <ErrorNote>{err}</ErrorNote>
     </section>
   );
 }

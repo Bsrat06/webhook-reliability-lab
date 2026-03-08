@@ -103,6 +103,17 @@ export default function SimulationRunPage({ params }: { params: Promise<{ id: st
         <section className="flex flex-col gap-3">
           <SectionHeader title="Configuration" />
           <ConfigSummary c={run.configuration} preset={run.preset} />
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px]">
+            <span className="text-ink-3">Export this run:</span>
+            {(["events", "deliveries", "attempts"] as const).map((d) => (
+              <a key={d} className="text-accent hover:underline" href={`/api/v1/exports/${d}?format=csv&simulation_run_id=${run.id}`} download>
+                {d} CSV
+              </a>
+            ))}
+            <a className="text-accent hover:underline" href={`/api/v1/exports/simulations?format=json&simulation_run_id=${run.id}`} download>
+              summary JSON
+            </a>
+          </div>
         </section>
       </div>
 
