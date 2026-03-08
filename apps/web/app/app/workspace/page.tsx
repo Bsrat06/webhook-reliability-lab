@@ -12,6 +12,8 @@ export default function WorkspacePage() {
     ["Endpoints", data.usage.endpoints, data.limits.endpoints],
     ["Events in the last hour", data.usage.events_last_hour, data.limits.events_per_hour],
     ["Replays in the last hour", data.usage.replays_last_hour, data.limits.replays_per_hour],
+    ["Simulated events in the last hour", data.usage.simulation_events_last_hour, data.limits.simulation_events_per_hour],
+    ["Simulations running", data.usage.simulations_active, data.limits.concurrent_simulations],
   ] as const;
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -52,6 +54,12 @@ export default function WorkspacePage() {
               <td className="py-2 pr-4">Deliveries in flight at once</td>
               <td className="py-2 font-mono" colSpan={2}>
                 {data.limits.workspace_concurrency}
+              </td>
+            </tr>
+            <tr className="border-t border-rule">
+              <td className="py-2 pr-4">Events per simulation · max runtime</td>
+              <td className="py-2 font-mono" colSpan={2}>
+                {data.limits.simulation_events} · {data.limits.simulation_runtime_seconds} s
               </td>
             </tr>
             <tr className="border-t border-rule">

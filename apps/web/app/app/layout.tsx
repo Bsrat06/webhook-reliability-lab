@@ -9,6 +9,7 @@ import type { Session } from "@/lib/types";
 import { Mono, relTime, shortId } from "@/components/ui";
 
 const NAV = [
+  { href: "/app/simulations", label: "Simulations" },
   { href: "/app/events", label: "Events" },
   { href: "/app/dead-letters", label: "Dead letters" },
   { href: "/app/endpoints", label: "Endpoints" },

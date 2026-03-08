@@ -41,6 +41,15 @@ export default function EventInspector({ params }: { params: Promise<{ id: strin
           Events
         </Link>{" "}
         / <Mono>{shortId(data.id)}</Mono>
+        {data.simulation_run_id ? (
+          <>
+            {" "}
+            · from{" "}
+            <Link href={`/app/simulations/${data.simulation_run_id}`} className="text-accent hover:underline">
+              simulation {shortId(data.simulation_run_id)}
+            </Link>
+          </>
+        ) : null}
       </nav>
       <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-3">

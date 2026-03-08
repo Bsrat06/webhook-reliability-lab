@@ -10,8 +10,9 @@ import { SendEventForm } from "@/components/send-event-form";
 
 export default function EventsPage() {
   const [q, setQ] = useState("");
+  const [source, setSource] = useState<"manual" | "simulation" | "">("manual");
   const [composing, setComposing] = useState(false);
-  const key = `/events?limit=50${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+  const key = `/events?limit=50${source ? `&source=${source}` : ""}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
   const { data, error, isLoading, mutate } = useSWR<EventList>(key, fetcher, {
     // Poll only while something is still moving; the database is the source of truth.
     refreshInterval: (d) => (d?.items.some((e) => e.status === "in_progress") ? 1000 : 0),
@@ -39,6 +40,19 @@ export default function EventsPage() {
 
       <section className="flex flex-col gap-2">
         <SectionHeader title="Recent events">
+          <div role="tablist" aria-label="Event source" className="flex gap-1">
+            {([["manual", "Sent manually"], ["simulation", "From simulations"], ["", "All"]] as const).map(([v, label]) => (
+              <button
+                key={v}
+                role="tab"
+                aria-selected={source === v}
+                onClick={() => setSource(v)}
+                className={`rounded-sm px-2 py-1 text-[12px] ${source === v ? "bg-paper font-semibold text-ink" : "text-ink-2 hover:text-ink"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <input
             aria-label="Search by type, correlation ID or idempotency key"
             placeholder="Search type, correlation, idempotency key"
@@ -51,8 +65,14 @@ export default function EventsPage() {
         {isLoading ? <p className="py-6 text-[13px] text-ink-3">Loading events…</p> : null}
         {data && data.items.length === 0 ? (
           <div className="flex flex-col items-start gap-2 py-8 text-[13px] text-ink-2">
-            <p>{q ? "No events match that search." : "No events yet. Send one to the built-in receiver to see a real delivery."}</p>
-            {!q && !composing ? (
+            <p>
+              {q
+                ? "No events match that search."
+                : source === "simulation"
+                  ? "No simulation events yet. Run a simulation from the Simulation lab."
+                  : "No events yet. Send one to the built-in receiver to see a real delivery."}
+            </p>
+            {!q && !composing && source !== "simulation" ? (
               <Button variant="primary" onClick={() => setComposing(true)}>
                 Send your first event
               </Button>
