@@ -104,6 +104,7 @@ def _detail(data: dict) -> EventDetail:
     dead = {d.delivery_id: d.reason for d in data["dead_letters"]}
     return EventDetail(
         id=ev.id,
+        simulation_run_id=ev.simulation_run_id,
         event_type=ev.event_type,
         payload=ev.payload,
         metadata=ev.metadata_,

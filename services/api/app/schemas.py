@@ -135,6 +135,7 @@ class DeliveryOut(DeliverySummary):
 
 class EventDetail(BaseModel):
     id: uuid.UUID
+    simulation_run_id: uuid.UUID | None = None
     event_type: str
     payload: dict
     metadata: dict
