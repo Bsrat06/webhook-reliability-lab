@@ -11,13 +11,19 @@ test("every page renders without client errors @mobile", async ({ page }) => {
   await expect(page).toHaveURL(/\/app\/events/);
   await expect(page.getByRole("heading", { name: "Events", level: 1 })).toBeVisible();
 
-  for (const [path, heading] of [
-    ["/app/endpoints", "Endpoints"],
-    ["/app/workspace", "Workspace"],
-    ["/app/events", "Events"],
+  // Navigate through the app's own nav, like a user (page.goto would abort in-flight route prefetches).
+  const nav = page.getByRole("navigation", { name: "Workspace" });
+  for (const [link, heading] of [
+    ["Simulations", "Simulation lab"],
+    ["Dead letters", "Dead-letter queue"],
+    ["Endpoints", "Endpoints"],
+    ["Workspace", "Workspace"],
+    ["Events", "Events"],
   ]) {
-    await page.goto(path);
+    await nav.getByRole("link", { name: link }).click();
     await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
   }
+  await page.goto("/app/simulations/new");
+  await expect(page.getByRole("heading", { name: "New simulation", level: 1 })).toBeVisible();
   expect(errors).toEqual([]);
 });
