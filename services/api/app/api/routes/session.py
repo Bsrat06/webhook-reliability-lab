@@ -1,15 +1,16 @@
 from datetime import timedelta
 
 from fastapi import APIRouter, Query, Request, Response
+from pydantic import BaseModel
 from sqlalchemy import func, select
 
-from app.api.deps import DB, CurrentWorkspace, current_workspace
+from app.api.deps import DB, Actor, CurrentWorkspace, current_workspace
 from app.api.ratelimit import guest_session_limiter
 from app.core.config import get_settings
 from app.core.errors import ServiceError
 from app.models import AuditEvent, DeadLetter, Delivery, Endpoint, Event, Job, SimulationRun, WorkerHeartbeat
 from app.schemas import AuditOut, SessionOut, WorkspaceOut
-from app.services.guest import create_guest_session
+from app.services.guest import create_guest_session, delete_workspace, reset_workspace
 
 router = APIRouter(prefix="/api/v1", tags=["session"])
 
@@ -120,3 +121,26 @@ def list_audit(ws: CurrentWorkspace, db: DB, limit: int = Query(50, ge=1, le=200
     if before_id:
         stmt = stmt.where(AuditEvent.id < before_id)
     return list(db.scalars(stmt.order_by(AuditEvent.id.desc()).limit(limit)))
+
+
+class ConfirmIn(BaseModel):
+    confirm: str
+
+
+@router.post("/workspaces/current/reset", response_model=SessionOut)
+def reset(body: ConfirmIn, ws: CurrentWorkspace, actor: Actor, db: DB) -> SessionOut:
+    if body.confirm != "reset":
+        raise ServiceError(422, "confirmation_required", 'Send {"confirm": "reset"} to delete all workspace data.')
+    reset_workspace(db, ws, actor)
+    return _session_payload(db, ws)
+
+
+@router.post("/workspaces/current/delete", status_code=204)
+def delete_now(body: ConfirmIn, response: Response, ws: CurrentWorkspace, db: DB):
+    if body.confirm != "delete":
+        raise ServiceError(422, "confirmation_required", 'Send {"confirm": "delete"} to delete this workspace now.')
+    delete_workspace(db, ws)
+    s = get_settings()
+    response.delete_cookie(s.session_cookie_name, path="/", httponly=True, secure=s.is_production, samesite="lax")
+    response.status_code = 204
+    return None
