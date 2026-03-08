@@ -13,6 +13,7 @@ const NAV = [
   { href: "/app/events", label: "Events" },
   { href: "/app/dead-letters", label: "Dead letters" },
   { href: "/app/endpoints", label: "Endpoints" },
+  { href: "/app/analytics", label: "Analytics" },
   { href: "/app/workspace", label: "Workspace" },
 ];
 
@@ -53,7 +54,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="mt-auto hidden flex-col gap-2 text-[12px] text-ink-3 md:flex">
+        <Link href="/docs" className="text-[12px] text-ink-3 hover:text-ink md:mt-auto">
+          Documentation
+        </Link>
+        <div className="hidden flex-col gap-2 text-[12px] text-ink-3 md:flex">
           {session ? (
             <>
               <WorkerStatus session={session} />
