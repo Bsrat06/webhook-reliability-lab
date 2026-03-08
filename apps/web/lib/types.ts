@@ -76,6 +76,7 @@ export interface EventListItem {
   idempotency_key: string | null;
   correlation_id: string;
   source: string;
+  simulation_run_id: string | null;
   status: EventStatus;
   deliveries: DeliverySummary[];
 }
@@ -115,6 +116,7 @@ export interface Delivery extends DeliverySummary {
 
 export interface EventDetail {
   id: string;
+  simulation_run_id: string | null;
   event_type: string;
   payload: unknown;
   metadata: Record<string, string>;
@@ -130,7 +132,7 @@ export interface EventDetail {
 
 export interface EventList {
   items: EventListItem[];
-  next_before: string | null;
+  next_cursor: string | null;
 }
 
 export type ReplayPolicy = "original" | "endpoint" | "fast" | "balanced" | "conservative";
@@ -183,4 +185,77 @@ export interface AuditEntry {
   resource_id: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
+}
+
+export interface SimulationConfig {
+  event_count: number;
+  endpoint_ids: string[];
+  event_type: string;
+  emit_over_ms: number;
+  concurrency: number;
+  receiver: ReceiverConfig;
+  retry_policy: RetryPolicy;
+  use_idempotency_keys: boolean;
+  duplicate_send_rate: number;
+  max_runtime_s: number;
+  seed: number;
+}
+
+export interface Percentiles {
+  n: number;
+  p50: number | null;
+  p95: number | null;
+  p99: number | null;
+  insufficient: boolean;
+  mean?: number | null;
+}
+
+export interface SimulationSummary {
+  deliveries: number;
+  events: number;
+  by_status: Record<DeliveryStatus, number>;
+  finished: number;
+  progress: number;
+  success_rate: number | null;
+  dead_letter_rate: number | null;
+  attempts: number;
+  retries: number;
+  attempts_per_delivery: number | null;
+  duplicates_suppressed: number;
+  failure_categories: Record<string, number>;
+  attempt_distribution: Record<string, number>;
+  latency_ms: Percentiles;
+  delivery_time_ms: Percentiles;
+  elapsed_ms: number;
+}
+
+export type SimulationStatus = "running" | "completed" | "cancelled" | "timed_out";
+
+export interface SimulationRun {
+  id: string;
+  name: string;
+  preset: string | null;
+  status: SimulationStatus;
+  configuration: SimulationConfig;
+  random_seed: number;
+  event_count: number;
+  delivery_count: number;
+  started_at: string;
+  deadline_at: string;
+  completed_at: string | null;
+  end_reason: string | null;
+  created_at: string;
+  summary: SimulationSummary | null;
+}
+
+export interface Preset {
+  key: string;
+  title: string;
+  description: string;
+  config: Omit<SimulationConfig, "endpoint_ids">;
+}
+
+export interface Comparison {
+  runs: SimulationRun[];
+  config_differences: { key: string; values: unknown[] }[];
 }

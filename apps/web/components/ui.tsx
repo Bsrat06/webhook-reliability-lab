@@ -46,11 +46,14 @@ const STATUS: Record<string, { glyph: string; label: string; cls: string }> = {
   success: { glyph: "●", label: "Success", cls: "text-ok" },
   retryable_failure: { glyph: "↻", label: "Retryable failure", cls: "text-warn" },
   permanent_failure: { glyph: "✕", label: "Permanent failure", cls: "text-bad" },
+  running: { glyph: "◐", label: "Running", cls: "text-busy" },
+  completed: { glyph: "●", label: "Completed", cls: "text-ok" },
+  timed_out: { glyph: "⧗", label: "Timed out", cls: "text-warn" },
 };
 
 export function Status({ value, compact }: { value: string; compact?: boolean }) {
   const s = STATUS[value] ?? { glyph: "?", label: value, cls: "text-ink-2" };
-  const live = value === "processing" || value === "in_progress";
+  const live = value === "processing" || value === "in_progress" || value === "running";
   return (
     <span className={`inline-flex items-center gap-1.5 whitespace-nowrap ${s.cls}`}>
       <span aria-hidden className={live ? "pulse" : ""}>
