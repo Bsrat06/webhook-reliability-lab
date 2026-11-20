@@ -49,7 +49,9 @@ def test_crashed_worker_lease_is_recovered(guest, live_server):
         (job,) = claim_jobs(db, "crashed-worker", 10)
     # Simulate a crash: the lease holder never finishes; force its lease to be expired.
     with engine.begin() as conn:
-        conn.execute(text("UPDATE jobs SET lease_expires_at = now() - interval '1 second' WHERE id = :id"), {"id": job.id})
+        conn.execute(
+            text("UPDATE jobs SET lease_expires_at = now() - interval '1 second' WHERE id = :id"), {"id": job.id}
+        )
     run_worker_until(lambda: guest.get(f"/api/v1/events/{event_id}").json()["status"] == "delivered")
     with engine.connect() as conn:
         claims = conn.execute(text("SELECT claim_count FROM jobs WHERE id = :id"), {"id": job.id}).scalar_one()

@@ -40,7 +40,9 @@ def bulk_replay(body: BulkReplayIn, ws: CurrentWorkspace, actor: Actor, db: DB):
         raise ServiceError(
             422, "confirmation_required", f"Confirm the bulk replay by sending confirm_count={n}.", expected=n
         )
-    replays = svc.replay_deliveries(db, ws, actor, body.delivery_ids, policy=body.policy, custom_policy=body.retry_policy)
+    replays = svc.replay_deliveries(
+        db, ws, actor, body.delivery_ids, policy=body.policy, custom_policy=body.retry_policy
+    )
     return ReplayOut(replays=[DeliverySummary.model_validate(r) for r in replays])
 
 
@@ -102,7 +104,9 @@ def get_dead_letter(record_id: uuid.UUID, ws: CurrentWorkspace, db: DB):
 @router.post("/dead-letters/{record_id}/replay", response_model=ReplayOut, status_code=201)
 def replay_dead_letter(record_id: uuid.UUID, body: ReplayIn, ws: CurrentWorkspace, actor: Actor, db: DB):
     dl = svc.get_dead_letter(db, ws, record_id)
-    replays = svc.replay_deliveries(db, ws, actor, [dl.delivery_id], policy=body.policy, custom_policy=body.retry_policy)
+    replays = svc.replay_deliveries(
+        db, ws, actor, [dl.delivery_id], policy=body.policy, custom_policy=body.retry_policy
+    )
     return ReplayOut(replays=[DeliverySummary.model_validate(r) for r in replays])
 
 

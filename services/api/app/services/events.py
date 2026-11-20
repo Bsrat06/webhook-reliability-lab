@@ -20,7 +20,9 @@ from app.models import (
 )
 
 
-def enqueue_delivery_job(db: Session, delivery: Delivery, delay_ms: int = 0, concurrency_limit: int | None = None) -> None:
+def enqueue_delivery_job(
+    db: Session, delivery: Delivery, delay_ms: int = 0, concurrency_limit: int | None = None
+) -> None:
     """Schedule on the database clock so API, worker and DB never disagree about due time."""
     limit = get_settings().quota_workspace_concurrency
     db.add(
@@ -38,7 +40,9 @@ def enqueue_delivery_job(db: Session, delivery: Delivery, delay_ms: int = 0, con
     )
 
 
-def new_delivery(db: Session, *, event: Event, endpoint: Endpoint, retry_policy: dict, reason: str = "created", **extra) -> Delivery:
+def new_delivery(
+    db: Session, *, event: Event, endpoint: Endpoint, retry_policy: dict, reason: str = "created", **extra
+) -> Delivery:
     """Persist a pending delivery with its first transition. The caller enqueues and commits."""
     d = Delivery(
         workspace_id=event.workspace_id,
@@ -50,7 +54,11 @@ def new_delivery(db: Session, *, event: Event, endpoint: Endpoint, retry_policy:
     )
     db.add(d)
     db.flush()
-    db.add(DeliveryTransition(workspace_id=d.workspace_id, delivery_id=d.id, from_status=None, to_status="pending", reason=reason))
+    db.add(
+        DeliveryTransition(
+            workspace_id=d.workspace_id, delivery_id=d.id, from_status=None, to_status="pending", reason=reason
+        )
+    )
     return d
 
 
@@ -160,7 +168,9 @@ def list_events(
         stmt = stmt.where(Event.event_type == event_type)
     if q:
         like = f"%{q.replace('%', r'\%').replace('_', r'\_')}%"
-        stmt = stmt.where(Event.event_type.ilike(like) | Event.correlation_id.ilike(like) | Event.idempotency_key.ilike(like))
+        stmt = stmt.where(
+            Event.event_type.ilike(like) | Event.correlation_id.ilike(like) | Event.idempotency_key.ilike(like)
+        )
     events = list(db.scalars(stmt.order_by(Event.created_at.desc(), Event.id.desc()).limit(limit)))
     by_event: dict[uuid.UUID, list[Delivery]] = {e.id: [] for e in events}
     if events:
@@ -174,13 +184,41 @@ def get_event_detail(db: Session, ws: Workspace, event_id: uuid.UUID) -> dict:
     if event is None:
         raise not_found("Event")
     deliveries = list(
-        db.scalars(select(Delivery).where(Delivery.event_id == event.id, Delivery.workspace_id == ws.id).order_by(Delivery.created_at))
+        db.scalars(
+            select(Delivery)
+            .where(Delivery.event_id == event.id, Delivery.workspace_id == ws.id)
+            .order_by(Delivery.created_at)
+        )
     )
     ids = [d.id for d in deliveries]
-    attempts = list(db.scalars(select(DeliveryAttempt).where(DeliveryAttempt.delivery_id.in_(ids)).order_by(DeliveryAttempt.attempt_number))) if ids else []
-    transitions = list(db.scalars(select(DeliveryTransition).where(DeliveryTransition.delivery_id.in_(ids)).order_by(DeliveryTransition.id))) if ids else []
+    attempts = (
+        list(
+            db.scalars(
+                select(DeliveryAttempt)
+                .where(DeliveryAttempt.delivery_id.in_(ids))
+                .order_by(DeliveryAttempt.attempt_number)
+            )
+        )
+        if ids
+        else []
+    )
+    transitions = (
+        list(
+            db.scalars(
+                select(DeliveryTransition)
+                .where(DeliveryTransition.delivery_id.in_(ids))
+                .order_by(DeliveryTransition.id)
+            )
+        )
+        if ids
+        else []
+    )
     dead = list(db.scalars(select(DeadLetter).where(DeadLetter.delivery_id.in_(ids)))) if ids else []
-    endpoints = {e.id: e for e in db.scalars(select(Endpoint).where(Endpoint.id.in_({d.endpoint_id for d in deliveries})))} if ids else {}
+    endpoints = (
+        {e.id: e for e in db.scalars(select(Endpoint).where(Endpoint.id.in_({d.endpoint_id for d in deliveries})))}
+        if ids
+        else {}
+    )
     return {
         "event": event,
         "deliveries": deliveries,

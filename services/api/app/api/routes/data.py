@@ -34,7 +34,18 @@ def export(
 ):
     """Download a bounded export. If the row limit is hit, the response says so (X-Export-Truncated)."""
     body, truncated, count = exports.render(db, ws, dataset, format, simulation_run_id)
-    audit(db, ws.id, actor, "data.exported", "export", None, dataset=dataset, format=format, rows=count, truncated=truncated)
+    audit(
+        db,
+        ws.id,
+        actor,
+        "data.exported",
+        "export",
+        None,
+        dataset=dataset,
+        format=format,
+        rows=count,
+        truncated=truncated,
+    )
     db.commit()
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     scope = f"-sim-{str(simulation_run_id)[:8]}" if simulation_run_id else ""

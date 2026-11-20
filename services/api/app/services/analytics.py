@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.models import Workspace
 
-WINDOWS = {"1h": (timedelta(hours=1), "1 minute"), "24h": (timedelta(hours=24), "30 minutes"), "7d": (timedelta(days=7), "6 hours")}
+WINDOWS = {
+    "1h": (timedelta(hours=1), "1 minute"),
+    "24h": (timedelta(hours=24), "30 minutes"),
+    "7d": (timedelta(days=7), "6 hours"),
+}
 MIN_PERCENTILE_SAMPLES = 20
 
 DEFINITIONS = {
@@ -38,7 +42,8 @@ def overview(db: Session, ws: Workspace, window: str, source: str) -> dict:
 
     by_status = dict(
         db.execute(
-            text(f"SELECT d.status, count(*) FROM deliveries d WHERE d.workspace_id = :ws {since_d} {src} GROUP BY 1"), params
+            text(f"SELECT d.status, count(*) FROM deliveries d WHERE d.workspace_id = :ws {since_d} {src} GROUP BY 1"),
+            params,
         ).all()
     )
     retry = db.execute(
@@ -48,12 +53,20 @@ def overview(db: Session, ws: Workspace, window: str, source: str) -> dict:
         ),
         params,
     ).one()
-    attempts_from = f"FROM delivery_attempts a JOIN deliveries d ON d.id = a.delivery_id WHERE a.workspace_id = :ws {since_a} {src}"
+    attempts_from = (
+        f"FROM delivery_attempts a JOIN deliveries d ON d.id = a.delivery_id WHERE a.workspace_id = :ws {since_a} {src}"
+    )
     lat = db.execute(
-        text(f"SELECT count(*), percentile_cont(ARRAY[0.5, 0.95, 0.99]) WITHIN GROUP (ORDER BY a.duration_ms) {attempts_from}"),
+        text(
+            f"SELECT count(*), percentile_cont(ARRAY[0.5, 0.95, 0.99]) WITHIN GROUP (ORDER BY a.duration_ms) {attempts_from}"
+        ),
         params,
     ).one()
-    categories = dict(db.execute(text(f"SELECT coalesce(a.error_category, 'success'), count(*) {attempts_from} GROUP BY 1"), params).all())
+    categories = dict(
+        db.execute(
+            text(f"SELECT coalesce(a.error_category, 'success'), count(*) {attempts_from} GROUP BY 1"), params
+        ).all()
+    )
     volume = [
         {"bucket": b.isoformat(), "success": s, "failure": f}
         for b, s, f in db.execute(
@@ -66,8 +79,11 @@ def overview(db: Session, ws: Workspace, window: str, source: str) -> dict:
         ).all()
     ]
     per_endpoint = {
-        i: (t, f) for i, t, f in db.execute(
-            text(f"SELECT d.endpoint_id, count(*), count(*) FILTER (WHERE a.outcome <> 'success') {attempts_from} GROUP BY 1"),
+        i: (t, f)
+        for i, t, f in db.execute(
+            text(
+                f"SELECT d.endpoint_id, count(*), count(*) FILTER (WHERE a.outcome <> 'success') {attempts_from} GROUP BY 1"
+            ),
             params,
         ).all()
     }
@@ -88,7 +104,9 @@ def overview(db: Session, ws: Workspace, window: str, source: str) -> dict:
             "failed_attempts": per_endpoint.get(i, (0, 0))[1],
             "dead_lettered": dead_per_endpoint.get(i, 0),
         }
-        for i, name in db.execute(text("SELECT id, name FROM endpoints WHERE workspace_id = :ws ORDER BY name"), params).all()
+        for i, name in db.execute(
+            text("SELECT id, name FROM endpoints WHERE workspace_id = :ws ORDER BY name"), params
+        ).all()
     ]
     distribution = {
         str(k): v

@@ -13,7 +13,9 @@ def _builtin(c) -> dict:
 
 
 def _send(c, ep_id, **extra):
-    r = c.post("/api/v1/events", json={"event_type": "order.created", "payload": {"n": 1}, "endpoint_ids": [ep_id], **extra})
+    r = c.post(
+        "/api/v1/events", json={"event_type": "order.created", "payload": {"n": 1}, "endpoint_ids": [ep_id], **extra}
+    )
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -117,7 +119,9 @@ def test_quotas_enforced_server_side(guest):
 
 
 def test_external_endpoints_disabled(guest):
-    r = guest.post("/api/v1/endpoints", json={"name": "ext", "endpoint_type": "external", "destination_url": "https://x.io"})
+    r = guest.post(
+        "/api/v1/endpoints", json={"name": "ext", "endpoint_type": "external", "destination_url": "https://x.io"}
+    )
     assert r.status_code == 422 and r.json()["error"]["code"] == "external_disabled"
 
 

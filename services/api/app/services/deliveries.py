@@ -72,7 +72,9 @@ def replay_deliveries(
     """Validate every delivery first, then create all replays atomically (all or nothing)."""
     ids = list(dict.fromkeys(delivery_ids))
     originals = [get_delivery(db, ws, i, lock=True) for i in ids]
-    endpoints = {e.id: e for e in db.scalars(select(Endpoint).where(Endpoint.id.in_({d.endpoint_id for d in originals})))}
+    endpoints = {
+        e.id: e for e in db.scalars(select(Endpoint).where(Endpoint.id.in_({d.endpoint_id for d in originals})))
+    }
     for d in originals:
         if d.status not in TERMINAL_DELIVERY_STATUSES:
             raise ServiceError(
@@ -106,7 +108,9 @@ def replay_deliveries(
     return replays
 
 
-def cancel_delivery(db: Session, ws: Workspace, actor: str, delivery_id: uuid.UUID, reason: str = "cancelled by user") -> Delivery:
+def cancel_delivery(
+    db: Session, ws: Workspace, actor: str, delivery_id: uuid.UUID, reason: str = "cancelled by user"
+) -> Delivery:
     d = get_delivery(db, ws, delivery_id, lock=True)
     if d.status in TERMINAL_DELIVERY_STATUSES:
         raise ServiceError(409, "delivery_finished", f"Delivery is already {d.status}.")
@@ -203,7 +207,9 @@ def dead_letter_detail(db: Session, ws: Workspace, record_id: uuid.UUID) -> dict
     item = _single(db, get_dead_letter(db, ws, record_id))
     d = item["delivery"]
     attempts = list(
-        db.scalars(select(DeliveryAttempt).where(DeliveryAttempt.delivery_id == d.id).order_by(DeliveryAttempt.attempt_number))
+        db.scalars(
+            select(DeliveryAttempt).where(DeliveryAttempt.delivery_id == d.id).order_by(DeliveryAttempt.attempt_number)
+        )
     )
     return {**item, "attempts": attempts, "payload": db.get(Event, d.event_id).payload}
 
@@ -222,7 +228,9 @@ def _single(db: Session, dl: DeadLetter) -> dict:
         "event_type": db.get(Event, d.event_id).event_type,
         "endpoint_name": db.get(Endpoint, d.endpoint_id).name,
         "last_status": last,
-        "replays": list(db.scalars(select(Delivery).where(Delivery.replay_of_delivery_id == d.id).order_by(Delivery.created_at))),
+        "replays": list(
+            db.scalars(select(Delivery).where(Delivery.replay_of_delivery_id == d.id).order_by(Delivery.created_at))
+        ),
     }
 
 
@@ -250,4 +258,3 @@ def dead_letter_counts(db: Session, ws: Workspace) -> dict[str, int]:
         ).where(DeadLetter.workspace_id == ws.id)
     ).one()
     return {"open": row[0], "resolved": row[1]}
-

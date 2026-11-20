@@ -74,5 +74,13 @@ def ready():
     return {"status": "ok", "database": "up"}
 
 
-for r in (session.router, endpoints.router, events.router, deliveries.router, simulations.router, data.router, receiver.router):
+for r in (
+    session.router,
+    endpoints.router,
+    events.router,
+    deliveries.router,
+    simulations.router,
+    data.router,
+    receiver.router,
+):
     app.include_router(r)

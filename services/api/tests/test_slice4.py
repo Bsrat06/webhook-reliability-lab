@@ -27,7 +27,10 @@ def _two_endpoints(c) -> tuple[str, str]:
 
 
 def _send(c, endpoint_ids, **extra) -> str:
-    r = c.post("/api/v1/events", json={"event_type": "order.created", "payload": {"n": 1}, "endpoint_ids": endpoint_ids, **extra})
+    r = c.post(
+        "/api/v1/events",
+        json={"event_type": "order.created", "payload": {"n": 1}, "endpoint_ids": endpoint_ids, **extra},
+    )
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
@@ -64,7 +67,7 @@ def test_analytics_match_persisted_records(guest, live_server):
 
 def test_exports_csv_and_json_are_correct_and_safe(guest, live_server):
     ok, bad = _two_endpoints(guest)
-    ids = [_send(guest, [ok], idempotency_key="=HYPERLINK(\"http://x\")"), _send(guest, [bad])]
+    ids = [_send(guest, [ok], idempotency_key='=HYPERLINK("http://x")'), _send(guest, [bad])]
     _settle(guest, ids)
 
     r = guest.get("/api/v1/exports/events?format=csv")
@@ -73,7 +76,7 @@ def test_exports_csv_and_json_are_correct_and_safe(guest, live_server):
     rows = list(csv.DictReader(io.StringIO(r.text)))
     assert {row["id"] for row in rows} == set(ids)
     keys = {row["idempotency_key"] for row in rows}
-    assert "'=HYPERLINK(\"http://x\")" in keys  # formula neutralised
+    assert '\'=HYPERLINK("http://x")' in keys  # formula neutralised
     assert json.loads(rows[0]["payload"]) == {"n": 1}
 
     attempts = guest.get("/api/v1/exports/attempts?format=json").json()
@@ -130,7 +133,9 @@ def test_workspace_reset_requires_confirmation_and_clears_data(guest, live_serve
     ws = guest.get("/api/v1/session").json()["workspace"]["id"]
     with engine.connect() as conn:
         for table in ("deliveries", "delivery_attempts", "jobs", "idempotency_records"):
-            assert conn.execute(text(f"SELECT count(*) FROM {table} WHERE workspace_id = :w"), {"w": ws}).scalar_one() == 0, table
+            assert (
+                conn.execute(text(f"SELECT count(*) FROM {table} WHERE workspace_id = :w"), {"w": ws}).scalar_one() == 0
+            ), table
 
 
 def test_delete_workspace_now(guest):

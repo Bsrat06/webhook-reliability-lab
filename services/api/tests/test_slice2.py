@@ -31,7 +31,9 @@ def _configure(c, ep_id, receiver=None, policy=None):
 
 
 def _send(c, ep_id, **extra) -> str:
-    r = c.post("/api/v1/events", json={"event_type": "order.created", "payload": {"n": 1}, "endpoint_ids": [ep_id], **extra})
+    r = c.post(
+        "/api/v1/events", json={"event_type": "order.created", "payload": {"n": 1}, "endpoint_ids": [ep_id], **extra}
+    )
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
@@ -115,7 +117,12 @@ def test_lost_acknowledgement_causes_visible_duplicate(guest, live_server):
 
 def test_timeout_is_recorded_as_timeout(guest, live_server):
     ep = _ep(guest)
-    _configure(guest, ep["id"], receiver={"mode": "fail", "failure_kind": "timeout"}, policy={"max_attempts": 1, "timeout_ms": 300})
+    _configure(
+        guest,
+        ep["id"],
+        receiver={"mode": "fail", "failure_kind": "timeout"},
+        policy={"max_attempts": 1, "timeout_ms": 300},
+    )
     ev = _send(guest, ep["id"])
     run_worker_until(lambda: _event(guest, ev)["status"] == "failed")
     (a,) = _event(guest, ev)["attempts"]
@@ -125,7 +132,12 @@ def test_timeout_is_recorded_as_timeout(guest, live_server):
 
 def test_connection_drop_is_a_network_failure(guest, live_server):
     ep = _ep(guest)
-    _configure(guest, ep["id"], receiver={"mode": "fail_first_n", "fail_first_n": 1, "failure_kind": "connection_drop"}, policy={"max_attempts": 3})
+    _configure(
+        guest,
+        ep["id"],
+        receiver={"mode": "fail_first_n", "fail_first_n": 1, "failure_kind": "connection_drop"},
+        policy={"max_attempts": 3},
+    )
     ev = _send(guest, ep["id"])
     run_worker_until(lambda: _event(guest, ev)["status"] == "delivered")
     attempts = _event(guest, ev)["attempts"]
@@ -220,7 +232,10 @@ def test_bulk_replay_requires_confirmation_and_bounds(guest, live_server):
 def test_replay_custom_policy_requires_spec(guest, live_server):
     ev, _ = _dead_letter_one(guest)
     d = _event(guest, ev)["deliveries"][0]["id"]
-    assert guest.post(f"/api/v1/deliveries/{d}/replay", json={"policy": "custom"}).json()["error"]["code"] == "policy_required"
+    assert (
+        guest.post(f"/api/v1/deliveries/{d}/replay", json={"policy": "custom"}).json()["error"]["code"]
+        == "policy_required"
+    )
     r = guest.post(f"/api/v1/deliveries/{d}/replay", json={"policy": "custom", "retry_policy": {"max_attempts": 9}})
     assert r.status_code == 201
     assert _event(guest, ev)["deliveries"][1]["retry_policy"]["max_attempts"] == 9
@@ -228,7 +243,12 @@ def test_replay_custom_policy_requires_spec(guest, live_server):
 
 def test_cancel_scheduled_retry(guest, live_server):
     ep = _ep(guest)
-    _configure(guest, ep["id"], receiver={"mode": "fail", "failure_status": 503}, policy={"max_attempts": 5, "initial_delay_ms": 60_000, "max_delay_ms": 60_000})
+    _configure(
+        guest,
+        ep["id"],
+        receiver={"mode": "fail", "failure_status": 503},
+        policy={"max_attempts": 5, "initial_delay_ms": 60_000, "max_delay_ms": 60_000},
+    )
     ev = _send(guest, ep["id"])
     run_worker_until(lambda: _event(guest, ev)["deliveries"][0]["status"] == "retry_scheduled")
     d = _event(guest, ev)["deliveries"][0]["id"]
@@ -289,13 +309,20 @@ def test_retention_cleanup_deletes_expired_guest_workspaces(guest, client):
         keep_id = keeper.get("/api/v1/session").json()["workspace"]["id"]
         ws_id = guest.get("/api/v1/session").json()["workspace"]["id"]
         with engine.begin() as conn:
-            conn.execute(text("UPDATE workspaces SET expires_at = now() - interval '1 minute' WHERE id = :id"), {"id": ws_id})
+            conn.execute(
+                text("UPDATE workspaces SET expires_at = now() - interval '1 minute' WHERE id = :id"), {"id": ws_id}
+            )
         with SessionLocal() as db:
             summary = run_cleanup(db)
         assert "workspaces=1" in summary
         with engine.connect() as conn:
             for table in ("workspaces", "events", "deliveries", "jobs", "endpoints", "guest_sessions"):
-                n = conn.execute(text(f"SELECT count(*) FROM {table} WHERE {'id' if table == 'workspaces' else 'workspace_id'} = :id"), {"id": ws_id}).scalar_one()
+                n = conn.execute(
+                    text(
+                        f"SELECT count(*) FROM {table} WHERE {'id' if table == 'workspaces' else 'workspace_id'} = :id"
+                    ),
+                    {"id": ws_id},
+                ).scalar_one()
                 assert n == 0, table
         assert guest.get("/api/v1/session").status_code == 401
         assert keeper.get("/api/v1/session").json()["workspace"]["id"] == keep_id
@@ -312,7 +339,9 @@ def test_cleanup_schedule_is_deduplicated():
 def test_worker_runs_cleanup_job(guest):
     ws_id = guest.get("/api/v1/session").json()["workspace"]["id"]
     with engine.begin() as conn:
-        conn.execute(text("UPDATE workspaces SET expires_at = now() - interval '1 minute' WHERE id = :id"), {"id": ws_id})
+        conn.execute(
+            text("UPDATE workspaces SET expires_at = now() - interval '1 minute' WHERE id = :id"), {"id": ws_id}
+        )
 
     def gone():
         with engine.connect() as conn:

@@ -66,7 +66,9 @@ PRESETS: dict[str, tuple[str, str, dict]] = {
         "Rate-limited receiver",
         "40% of attempts get HTTP 429 with Retry-After: 1. The policy honors Retry-After, so retries slow down.",
         {
-            "receiver": _receiver(failure_rate=0.4, failure_mix=FailureMix(server_error=0, rate_limited=1), retry_after_s=1),
+            "receiver": _receiver(
+                failure_rate=0.4, failure_mix=FailureMix(server_error=0, rate_limited=1), retry_after_s=1
+            ),
             "retry_policy": _policy(max_delay_ms=3_000),
         },
     ),
@@ -75,7 +77,11 @@ PRESETS: dict[str, tuple[str, str, dict]] = {
         "Responses take 200–900 ms and 20% never answer. The 1 s request timeout turns those into timeout failures.",
         {
             "receiver": ReceiverBehavior(
-                mode="random", failure_rate=0.2, failure_mix=FailureMix(server_error=0, timeout=1), latency_ms_min=200, latency_ms_max=900
+                mode="random",
+                failure_rate=0.2,
+                failure_mix=FailureMix(server_error=0, timeout=1),
+                latency_ms_min=200,
+                latency_ms_max=900,
             ),
             "retry_policy": _policy(timeout_ms=1_000),
         },
@@ -84,7 +90,9 @@ PRESETS: dict[str, tuple[str, str, dict]] = {
         "Unstable network",
         "30% of attempts fail at the network level: connections drop mid-response or time out.",
         {
-            "receiver": _receiver(failure_rate=0.3, failure_mix=FailureMix(server_error=0, connection_drop=0.7, timeout=0.3)),
+            "receiver": _receiver(
+                failure_rate=0.3, failure_mix=FailureMix(server_error=0, connection_drop=0.7, timeout=0.3)
+            ),
             "retry_policy": _policy(timeout_ms=1_000),
         },
     ),
@@ -93,7 +101,9 @@ PRESETS: dict[str, tuple[str, str, dict]] = {
         "Deliveries succeed, but 25% of acknowledgements are lost and 10% of events are sent twice. "
         "The idempotent receiver suppresses the duplicates; the counts show how many it caught.",
         {
-            "receiver": ReceiverBehavior(mode="succeed", ack_loss_rate=0.25, idempotency=True, latency_ms_min=10, latency_ms_max=80),
+            "receiver": ReceiverBehavior(
+                mode="succeed", ack_loss_rate=0.25, idempotency=True, latency_ms_min=10, latency_ms_max=80
+            ),
             "retry_policy": _policy(),
             "duplicate_send_rate": 0.1,
         },

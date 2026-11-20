@@ -36,7 +36,9 @@ def create_event(body: EventIn, ws: CurrentWorkspace, db: DB):
     return _detail(svc.get_event_detail(db, ws, event.id))
 
 
-DeliveryFilter = Literal["pending", "processing", "retry_scheduled", "succeeded", "dead_lettered", "cancelled", "retried"]
+DeliveryFilter = Literal[
+    "pending", "processing", "retry_scheduled", "succeeded", "dead_lettered", "cancelled", "retried"
+]
 
 
 def parse_cursor(cursor: str | None) -> tuple[datetime, uuid.UUID] | None:

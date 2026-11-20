@@ -86,5 +86,7 @@ def delete_endpoint(endpoint_id: uuid.UUID, ws: CurrentWorkspace, actor: Actor, 
 
 
 @router.get("/{endpoint_id}/idempotency-records", response_model=list[IdempotencyRecordOut])
-def list_idempotency_records(endpoint_id: uuid.UUID, ws: CurrentWorkspace, db: DB, limit: int = Query(50, ge=1, le=200)):
+def list_idempotency_records(
+    endpoint_id: uuid.UUID, ws: CurrentWorkspace, db: DB, limit: int = Query(50, ge=1, le=200)
+):
     return svc.idempotency_records(db, ws, endpoint_id, limit)

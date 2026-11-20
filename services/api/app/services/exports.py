@@ -79,7 +79,9 @@ def _is_number(s: str) -> bool:
         return False
 
 
-def rows(db: Session, ws: Workspace, dataset: str, simulation_run_id: uuid.UUID | None) -> tuple[list[str], list[tuple], bool]:
+def rows(
+    db: Session, ws: Workspace, dataset: str, simulation_run_id: uuid.UUID | None
+) -> tuple[list[str], list[tuple], bool]:
     limit = get_settings().quota_export_rows
     sql, _ = DATASETS[dataset]
     alias = SIM_COLUMN[dataset]
@@ -95,7 +97,9 @@ def rows(db: Session, ws: Workspace, dataset: str, simulation_run_id: uuid.UUID 
     return columns, data[:limit], truncated
 
 
-def render(db: Session, ws: Workspace, dataset: str, fmt: str, simulation_run_id: uuid.UUID | None) -> tuple[str, bool, int]:
+def render(
+    db: Session, ws: Workspace, dataset: str, fmt: str, simulation_run_id: uuid.UUID | None
+) -> tuple[str, bool, int]:
     """Returns (body, truncated, row_count)."""
     if dataset == "analytics":
         data = analytics.overview(db, ws, "all", "all")

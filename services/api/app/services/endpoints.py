@@ -41,7 +41,9 @@ def create_endpoint(
         raise quota_exceeded("Endpoint", limit, "Delete an unused endpoint to create another.")
     if endpoint_type == "external":
         # External destinations stay disabled until SSRF defenses are implemented and tested (spec §8.3).
-        raise ServiceError(422, "external_disabled", "External HTTPS destinations are not enabled on this deployment yet.")
+        raise ServiceError(
+            422, "external_disabled", "External HTTPS destinations are not enabled on this deployment yet."
+        )
     secret = new_endpoint_secret()
     ep = Endpoint(
         workspace_id=ws.id,
@@ -58,7 +60,9 @@ def create_endpoint(
     return ep, secret
 
 
-def update_endpoint(db: Session, ws: Workspace, endpoint_id: uuid.UUID, changes: dict, actor: str = "system") -> Endpoint:
+def update_endpoint(
+    db: Session, ws: Workspace, endpoint_id: uuid.UUID, changes: dict, actor: str = "system"
+) -> Endpoint:
     ep = get_endpoint(db, ws, endpoint_id)
     for field in ("name", "description", "enabled"):
         if changes.get(field) is not None:
@@ -67,7 +71,15 @@ def update_endpoint(db: Session, ws: Workspace, endpoint_id: uuid.UUID, changes:
         ep.receiver_config = ReceiverBehavior.model_validate(changes["receiver_config"]).model_dump()
     if changes.get("retry_policy") is not None:
         ep.retry_policy = RetryPolicySpec.model_validate(changes["retry_policy"]).model_dump()
-    audit(db, ws.id, actor, "endpoint.updated", "endpoint", ep.id, fields=sorted(k for k, v in changes.items() if v is not None))
+    audit(
+        db,
+        ws.id,
+        actor,
+        "endpoint.updated",
+        "endpoint",
+        ep.id,
+        fields=sorted(k for k, v in changes.items() if v is not None),
+    )
     db.commit()
     db.refresh(ep)
     return ep

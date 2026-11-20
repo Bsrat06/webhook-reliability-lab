@@ -138,4 +138,3 @@ async def receive(endpoint_id: uuid.UUID, request: Request):
         status_code=200,
         headers={"x-receiver-decision": decision_header, "x-receiver-result": result},
     )
-

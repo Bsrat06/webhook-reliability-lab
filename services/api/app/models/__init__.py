@@ -121,7 +121,9 @@ class Delivery(Base):
     __tablename__ = "deliveries"
     id: Mapped[uuid.UUID] = _uuid()
     workspace_id: Mapped[uuid.UUID] = _ws_fk()
-    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False
+    )
     endpoint_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("endpoints.id", ondelete="CASCADE"), nullable=False
     )
@@ -178,7 +180,9 @@ class DeliveryAttempt(Base):
     created_at: Mapped[datetime] = _created()
     __table_args__ = (
         UniqueConstraint("delivery_id", "attempt_number", name="uq_attempt_number"),
-        CheckConstraint(_in("outcome", ("success", "retryable_failure", "permanent_failure")), name="ck_attempt_outcome"),
+        CheckConstraint(
+            _in("outcome", ("success", "retryable_failure", "permanent_failure")), name="ck_attempt_outcome"
+        ),
     )
 
 

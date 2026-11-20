@@ -122,7 +122,9 @@ def _prepare(db: Session, job: ClaimedJob, worker_id: str) -> Prepared | None:
         record_transition(db, d, "dead_lettered", "worker repeatedly failed to complete this job")
         d.completed_at = func.now()
         d.last_error_category = "worker_error"
-        db.add(DeadLetter(workspace_id=d.workspace_id, delivery_id=d.id, reason="Worker failed to complete delivery job"))
+        db.add(
+            DeadLetter(workspace_id=d.workspace_id, delivery_id=d.id, reason="Worker failed to complete delivery job")
+        )
         _finish_job(held, "failed", "exceeded max claims")
         db.commit()
         _after_terminal(db, d.simulation_run_id)
@@ -298,7 +300,9 @@ def _record(db: Session, job: ClaimedJob, worker_id: str, p: Prepared, r: HttpRe
     elif outcome == "retryable_failure" and d.attempt_count < policy.max_attempts:
         delay = delay_after_failure(policy, d.attempt_count, _retry_after(r), _jitter_rng(d))
         d.next_attempt_at = func.now() + timedelta(milliseconds=delay)
-        record_transition(db, d, "retry_scheduled", f"attempt {d.attempt_count} failed ({category}); retry in {delay} ms")
+        record_transition(
+            db, d, "retry_scheduled", f"attempt {d.attempt_count} failed ({category}); retry in {delay} ms"
+        )
         enqueue_delivery_job(db, d, delay)
     else:
         reason = (

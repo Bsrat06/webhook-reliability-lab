@@ -53,7 +53,10 @@ def _decisions(run_id: str) -> dict:
 def test_presets_map_to_distinct_executable_configs(guest):
     presets = guest.get("/api/v1/simulations/presets").json()
     assert len(presets) == 8
-    configs = {p["key"]: (p["config"]["receiver"], p["config"]["retry_policy"], p["config"]["duplicate_send_rate"]) for p in presets}
+    configs = {
+        p["key"]: (p["config"]["receiver"], p["config"]["retry_policy"], p["config"]["duplicate_send_rate"])
+        for p in presets
+    }
     assert len({repr(v) for v in configs.values()}) == 8
     assert configs["rate_limited"][0]["failure_mix"]["rate_limited"] > 0
     assert configs["slow_timeouts"][1]["timeout_ms"] == 1000
@@ -75,7 +78,9 @@ def test_healthy_run_completes_with_persisted_results(guest, live_server):
     assert guest.get("/api/v1/events?source=manual").json()["items"] == []
     stored = done["summary"]
     with SessionLocal() as db:
-        snapshot = db.execute(text("SELECT summary FROM simulation_runs WHERE id = :id"), {"id": run["id"]}).scalar_one()
+        snapshot = db.execute(
+            text("SELECT summary FROM simulation_runs WHERE id = :id"), {"id": run["id"]}
+        ).scalar_one()
     assert snapshot["attempts"] == stored["attempts"]
 
 
@@ -114,7 +119,12 @@ def test_cancel_stops_remaining_deliveries(guest, live_server):
     s = r.json()["summary"]
     assert s["by_status"]["cancelled"] + s["by_status"]["succeeded"] == 50 and s["success_rate"] in (None, 1.0)
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT count(*) FROM jobs WHERE status = 'queued' AND job_type = 'deliver'")).scalar_one() == 0
+        assert (
+            conn.execute(
+                text("SELECT count(*) FROM jobs WHERE status = 'queued' AND job_type = 'deliver'")
+            ).scalar_one()
+            == 0
+        )
     assert guest.post(f"/api/v1/simulations/{run['id']}/cancel").status_code == 409
     assert "simulation.cancelled" in [a["action"] for a in guest.get("/api/v1/workspaces/current/audit").json()]
 
@@ -131,7 +141,10 @@ def test_runtime_limit_is_enforced_by_durable_deadline_job(guest, live_server):
 
 def test_simulation_quotas(guest, live_server):
     ep = _ep(guest)
-    assert guest.post("/api/v1/simulations", json={"config": {"endpoint_ids": [ep], "event_count": 1001}}).status_code == 422
+    assert (
+        guest.post("/api/v1/simulations", json={"config": {"endpoint_ids": [ep], "event_count": 1001}}).status_code
+        == 422
+    )
     r = guest.post("/api/v1/simulations", json={"config": {"endpoint_ids": [ep], "concurrency": 8}})
     assert r.status_code == 429 and r.json()["error"]["code"] == "quota_exceeded"
     _start(guest, {"endpoint_ids": [ep], "event_count": 5, "emit_over_ms": 60_000})
@@ -168,8 +181,14 @@ def test_simulation_isolation(guest, live_server):
 
 def test_compare_runs_shows_outcome_and_config_differences(guest, live_server):
     ep = _ep(guest)
-    base = {"endpoint_ids": [ep], "event_count": 20, "concurrency": 4, "seed": 5, "retry_policy": FAST_POLICY,
-            "receiver": {"mode": "random", "failure_rate": 0.5, "latency_ms_min": 5, "latency_ms_max": 20}}
+    base = {
+        "endpoint_ids": [ep],
+        "event_count": 20,
+        "concurrency": 4,
+        "seed": 5,
+        "retry_policy": FAST_POLICY,
+        "receiver": {"mode": "random", "failure_rate": 0.5, "latency_ms_min": 5, "latency_ms_max": 20},
+    }
     a = _wait(guest, _start(guest, base)["id"])
     b = _wait(guest, _start(guest, {**base, "retry_policy": {**FAST_POLICY, "max_attempts": 6}})["id"])
     r = guest.post("/api/v1/simulations/compare", json={"run_ids": [a["id"], b["id"]]})
@@ -212,7 +231,13 @@ def test_live_progress_stream(guest, live_server):
 
 
 def test_duplicate_challenge_suppresses_duplicates(guest, live_server):
-    cfg = {**_preset(guest, "duplicate_challenge")["config"], "endpoint_ids": [_ep(guest)], "event_count": 40, "concurrency": 4, "seed": 3}
+    cfg = {
+        **_preset(guest, "duplicate_challenge")["config"],
+        "endpoint_ids": [_ep(guest)],
+        "event_count": 40,
+        "concurrency": 4,
+        "seed": 3,
+    }
     run = _start(guest, cfg, preset="duplicate_challenge")
     assert run["event_count"] > 40  # producer duplicates were added deterministically
     done = _wait(guest, run["id"])

@@ -29,7 +29,9 @@ def list_presets():
     out = []
     for key, (title, description, partial) in PRESETS.items():
         # Show every field the preset executes, with defaults filled in. Endpoints and seed are chosen per run.
-        cfg = SimulationConfig(endpoint_ids=[uuid.UUID(int=0)], **partial).model_dump(mode="json", exclude={"endpoint_ids"})
+        cfg = SimulationConfig(endpoint_ids=[uuid.UUID(int=0)], **partial).model_dump(
+            mode="json", exclude={"endpoint_ids"}
+        )
         out.append(PresetOut(key=key, title=title, description=description, config=cfg))
     return out
 
@@ -79,7 +81,9 @@ def simulation_events(
     delivery_status: DeliveryFilter | None = None,
 ):
     svc.get_run(db, ws, run_id)
-    return event_page(db, ws, limit, cursor=parse_cursor(cursor), simulation_run_id=run_id, delivery_status=delivery_status)
+    return event_page(
+        db, ws, limit, cursor=parse_cursor(cursor), simulation_run_id=run_id, delivery_status=delivery_status
+    )
 
 
 def _snapshot(workspace_id: uuid.UUID, run_id: uuid.UUID) -> dict | None:
@@ -96,7 +100,9 @@ def _snapshot(workspace_id: uuid.UUID, run_id: uuid.UUID) -> dict | None:
 
 
 @router.get("/{run_id}/stream")
-async def stream(run_id: uuid.UUID, request: Request, ws: CurrentWorkspace, db: DB, interval: Literal["fast", "normal"] = "normal"):
+async def stream(
+    run_id: uuid.UUID, request: Request, ws: CurrentWorkspace, db: DB, interval: Literal["fast", "normal"] = "normal"
+):
     """Server-Sent Events. Messages are notifications derived from the database, which stays authoritative:
     clients reconnect or fall back to polling GET /simulations/{id} and lose nothing."""
     svc.get_run(db, ws, run_id)

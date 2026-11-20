@@ -33,7 +33,9 @@ class RetryPolicySpec(BaseModel):
 
 PRESETS: dict[str, RetryPolicySpec] = {
     "fast": RetryPolicySpec(max_attempts=4, initial_delay_ms=500, multiplier=2, max_delay_ms=4_000, jitter="full"),
-    "balanced": RetryPolicySpec(max_attempts=6, initial_delay_ms=2_000, multiplier=2, max_delay_ms=60_000, jitter="full"),
+    "balanced": RetryPolicySpec(
+        max_attempts=6, initial_delay_ms=2_000, multiplier=2, max_delay_ms=60_000, jitter="full"
+    ),
     "conservative": RetryPolicySpec(
         max_attempts=8, initial_delay_ms=10_000, multiplier=3, max_delay_ms=3_600_000, jitter="equal"
     ),

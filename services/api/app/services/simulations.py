@@ -35,11 +35,15 @@ def _check_quotas(db: Session, ws: Workspace, cfg: SimulationConfig) -> None:
     if cfg.concurrency > s.quota_workspace_concurrency:
         raise quota_exceeded("Simulation concurrency", s.quota_workspace_concurrency, "Lower the concurrency.")
     if cfg.max_runtime_s > s.quota_simulation_runtime_seconds:
-        raise quota_exceeded("Simulation runtime (seconds)", s.quota_simulation_runtime_seconds, "Lower the max runtime.")
+        raise quota_exceeded(
+            "Simulation runtime (seconds)", s.quota_simulation_runtime_seconds, "Lower the max runtime."
+        )
     # Serialize run creation per workspace so two concurrent requests cannot both pass the active-run check.
     db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"sim:{ws.id}"})
     active = db.scalar(
-        select(func.count()).select_from(SimulationRun).where(SimulationRun.workspace_id == ws.id, SimulationRun.status == "running")
+        select(func.count())
+        .select_from(SimulationRun)
+        .where(SimulationRun.workspace_id == ws.id, SimulationRun.status == "running")
     )
     if active >= s.quota_concurrent_simulations:
         raise ServiceError(
@@ -64,15 +68,22 @@ def _check_quotas(db: Session, ws: Workspace, cfg: SimulationConfig) -> None:
         )
 
 
-def create_run(db: Session, ws: Workspace, actor: str, cfg: SimulationConfig, name: str | None, preset: str | None) -> SimulationRun:
+def create_run(
+    db: Session, ws: Workspace, actor: str, cfg: SimulationConfig, name: str | None, preset: str | None
+) -> SimulationRun:
     if preset is not None and preset not in PRESETS:
         raise ServiceError(422, "unknown_preset", f"Unknown preset '{preset}'.")
-    endpoints = {e.id: e for e in db.scalars(select(Endpoint).where(Endpoint.workspace_id == ws.id, Endpoint.id.in_(cfg.endpoint_ids)))}
+    endpoints = {
+        e.id: e
+        for e in db.scalars(select(Endpoint).where(Endpoint.workspace_id == ws.id, Endpoint.id.in_(cfg.endpoint_ids)))
+    }
     if len(endpoints) != len(cfg.endpoint_ids):
         raise ServiceError(422, "invalid_endpoints", "Select endpoints from this workspace.")
     for e in endpoints.values():
         if e.endpoint_type != "builtin":
-            raise ServiceError(422, "builtin_only", f"Simulations target built-in receivers only ('{e.name}' is external).")
+            raise ServiceError(
+                422, "builtin_only", f"Simulations target built-in receivers only ('{e.name}' is external)."
+            )
         if not e.enabled:
             raise ServiceError(422, "endpoint_disabled", f"Endpoint '{e.name}' is disabled.")
 
@@ -133,7 +144,13 @@ def create_run(db: Session, ws: Workspace, actor: str, cfg: SimulationConfig, na
                 }
             )
             transitions.append(
-                {"workspace_id": ws.id, "delivery_id": delivery_id, "from_status": None, "to_status": "pending", "reason": "created by simulation"}
+                {
+                    "workspace_id": ws.id,
+                    "delivery_id": delivery_id,
+                    "from_status": None,
+                    "to_status": "pending",
+                    "reason": "created by simulation",
+                }
             )
             jobs.append(
                 {
@@ -162,7 +179,17 @@ def create_run(db: Session, ws: Workspace, actor: str, cfg: SimulationConfig, na
             scheduled_at=run.deadline_at,
         )
     )
-    audit(db, ws.id, actor, "simulation.started", "simulation_run", run.id, preset=preset, events=total_events, seed=cfg.seed)
+    audit(
+        db,
+        ws.id,
+        actor,
+        "simulation.started",
+        "simulation_run",
+        run.id,
+        preset=preset,
+        events=total_events,
+        seed=cfg.seed,
+    )
     db.commit()
     return run
 
@@ -227,7 +254,10 @@ def compute_summary(db: Session, run: SimulationRun) -> dict:
     return {
         "deliveries": run.delivery_count,
         "events": run.event_count,
-        "by_status": {s: by_status.get(s, 0) for s in ("pending", "processing", "retry_scheduled", "succeeded", "dead_lettered", "cancelled")},
+        "by_status": {
+            s: by_status.get(s, 0)
+            for s in ("pending", "processing", "retry_scheduled", "succeeded", "dead_lettered", "cancelled")
+        },
         "finished": finished,
         "progress": round(finished / run.delivery_count, 4) if run.delivery_count else 0,
         # Denominator: deliveries that reached a decision (succeeded or dead-lettered); cancelled are excluded.
@@ -239,7 +269,10 @@ def compute_summary(db: Session, run: SimulationRun) -> dict:
         "duplicates_suppressed": row.duplicates,
         "failure_categories": categories,
         "attempt_distribution": distribution,
-        "latency_ms": {**_pcts(row.latency, row.attempts), "mean": round(float(row.latency_mean)) if row.latency_mean is not None else None},
+        "latency_ms": {
+            **_pcts(row.latency, row.attempts),
+            "mean": round(float(row.latency_mean)) if row.latency_mean is not None else None,
+        },
         "delivery_time_ms": _pcts(row.delivery_time, row.delivery_time_n),
         "elapsed_ms": max(0, int((end - run.started_at).total_seconds() * 1000)),
     }
@@ -250,7 +283,9 @@ def compute_summary(db: Session, run: SimulationRun) -> dict:
 
 def _remaining(db: Session, run_id: uuid.UUID) -> int:
     return db.scalar(
-        select(func.count()).select_from(Delivery).where(Delivery.simulation_run_id == run_id, Delivery.status.in_(_NON_TERMINAL))
+        select(func.count())
+        .select_from(Delivery)
+        .where(Delivery.simulation_run_id == run_id, Delivery.status.in_(_NON_TERMINAL))
     )
 
 
@@ -266,7 +301,11 @@ def finalize_if_done(db: Session, run_id: uuid.UUID) -> bool:
     """Called after a simulation delivery reaches a terminal state. Safe to call concurrently."""
     if _remaining(db, run_id):
         return False
-    run = db.scalar(select(SimulationRun).where(SimulationRun.id == run_id, SimulationRun.status == "running").with_for_update(skip_locked=True))
+    run = db.scalar(
+        select(SimulationRun)
+        .where(SimulationRun.id == run_id, SimulationRun.status == "running")
+        .with_for_update(skip_locked=True)
+    )
     if run is None or _remaining(db, run_id):
         db.rollback()
         return False
@@ -356,7 +395,12 @@ def receiver_behavior_for_run(db: Session, workspace_id: uuid.UUID, run_id: str)
 
 def list_runs(db: Session, ws: Workspace, limit: int = 50) -> list[SimulationRun]:
     return list(
-        db.scalars(select(SimulationRun).where(SimulationRun.workspace_id == ws.id).order_by(SimulationRun.created_at.desc()).limit(limit))
+        db.scalars(
+            select(SimulationRun)
+            .where(SimulationRun.workspace_id == ws.id)
+            .order_by(SimulationRun.created_at.desc())
+            .limit(limit)
+        )
     )
 
 
@@ -389,4 +433,3 @@ def compare_runs(db: Session, ws: Workspace, run_ids: list[uuid.UUID]) -> dict:
         {"key": k, "values": [c.get(k) for c in configs]} for k in keys if len({repr(c.get(k)) for c in configs}) > 1
     ]
     return {"runs": [(r, summary_for(db, r)) for r in runs], "config_differences": differences}
-

@@ -24,7 +24,9 @@ def _session_payload(db, ws) -> SessionOut:
         .where(Event.workspace_id == ws.id, Event.created_at >= func.now() - timedelta(hours=1))
     )
     dead_open = db.scalar(
-        select(func.count()).select_from(DeadLetter).where(DeadLetter.workspace_id == ws.id, DeadLetter.resolved_at.is_(None))
+        select(func.count())
+        .select_from(DeadLetter)
+        .where(DeadLetter.workspace_id == ws.id, DeadLetter.resolved_at.is_(None))
     )
     replays_hour = db.scalar(
         select(func.count())
@@ -36,7 +38,9 @@ def _session_payload(db, ws) -> SessionOut:
         )
     )
     sims_active = db.scalar(
-        select(func.count()).select_from(SimulationRun).where(SimulationRun.workspace_id == ws.id, SimulationRun.status == "running")
+        select(func.count())
+        .select_from(SimulationRun)
+        .where(SimulationRun.workspace_id == ws.id, SimulationRun.status == "running")
     )
     sim_events_hour = db.scalar(
         select(func.coalesce(func.sum(SimulationRun.event_count), 0)).where(
@@ -96,7 +100,9 @@ def start_guest_session(request: Request, response: Response, db: DB) -> Session
             pass
     client_ip = request.client.host if request.client else "unknown"
     if not guest_session_limiter.allow(request.headers.get("x-forwarded-for", client_ip).split(",")[0].strip()):
-        raise ServiceError(429, "rate_limited", "Too many guest sessions from this address. Try again in a few minutes.")
+        raise ServiceError(
+            429, "rate_limited", "Too many guest sessions from this address. Try again in a few minutes."
+        )
     ws, token = create_guest_session(db)
     response.set_cookie(
         s.session_cookie_name,
