@@ -1,0 +1,35 @@
+# Render Blueprint: API and delivery worker in one free web service. Postgres is external (Neon).
+services:
+  - type: web
+    name: webhook-lab-api
+    runtime: docker
+    plan: free
+    rootDir: services/api
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health/ready
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PORT
+        value: "10000"
+      # The worker reaches the built-in receiver inside the same container.
+      - key: RECEIVER_BASE_URL
+        value: http://127.0.0.1:10000
+      - key: RUN_WORKER_IN_API
+        value: "true"
+      - key: WORKER_CONCURRENCY
+        value: "4"
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_MAX_OVERFLOW
+        value: "5"
+      - key: SECRET_KEY
+        generateValue: true
+      # Neon direct (non-pooled) connection string, e.g. postgresql+psycopg://user:pass@ep-xxx.region.aws.neon.tech/neondb?sslmode=require
+      # The direct endpoint keeps one connection per pooled session; SQLAlchemy already pools on our side.
+      - key: DATABASE_URL
+        sync: false
+      # The public web origin, e.g. https://<project>.vercel.app
+      - key: ALLOWED_ORIGINS
+        sync: false
