@@ -200,7 +200,7 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
     body: (
       <>
         <p>Requirements: Docker. Everything (PostgreSQL, API, worker, web) runs from the repository root:</p>
-        <pre>
+        <pre tabIndex={0} aria-label="Self-hosting commands">
           <code>{`cp .env.example .env     # set SECRET_KEY to a long random value
 docker compose up --build
 # open http://localhost:3000`}</code>
@@ -239,7 +239,7 @@ export default function DocsPage() {
             ))}
           </ol>
         </nav>
-        <article className="docs flex max-w-prose flex-col gap-8 text-[14px] leading-relaxed">
+        <article className="docs flex min-w-0 max-w-prose flex-col gap-8 text-[14px] leading-relaxed">
           {SECTIONS.map((s) => (
             <section key={s.id} id={s.id} className="flex scroll-mt-6 flex-col gap-2">
               <h2 className="text-[16px] font-semibold">{s.title}</h2>

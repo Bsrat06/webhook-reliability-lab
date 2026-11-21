@@ -117,7 +117,7 @@ export default async function Landing({ searchParams }: { searchParams: Promise<
           on the server: 5 endpoints, 256 KB payloads, hourly event and replay caps, one simulation at a time (up to
           1,000 events, 5 minutes), and 4 deliveries in flight per workspace. The built-in receiver covers every
           feature. The project is MIT-licensed open source and can be self-hosted without these shared limits. See
-          the <a className="text-accent hover:underline" href="/docs#self-hosting">self-hosting guide</a>.
+          the <a className="text-accent underline" href="/docs#self-hosting">self-hosting guide</a>.
         </p>
       </section>
     </main>
