@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = 30
     worker_batch_size: int = 10
     worker_poll_interval_seconds: float = 0.5
+    # Run the delivery worker inside the API process, for hosts that offer a single free web service.
+    run_worker_in_api: bool = False
+    db_pool_size: int = 10
+    db_max_overflow: int = 10
 
     @property
     def is_production(self) -> bool:
