@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "10.17.1"
+
+jobs:
+  backend:
+    name: API lint, migrations and tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app" --health-interval 2s --health-timeout 5s --health-retries 30
+    defaults:
+      run:
+        working-directory: services/api
+    env:
+      DATABASE_URL: postgresql+psycopg://app:app@localhost:5432/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/api/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check app tests
+      - name: Format
+        run: ruff format --check app tests
+      - name: Migrations apply cleanly and match the models
+        run: |
+          alembic upgrade head
+          alembic check
+          alembic downgrade base
+          alembic upgrade head
+      - name: Tests (real PostgreSQL, live receiver, real worker)
+        run: python -m pytest -q
+
+  web:
+    name: Web typecheck and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    needs: [backend, web]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app" --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      DATABASE_URL: postgresql+psycopg://app:app@localhost:5432/app
+      SECRET_KEY: ci-only-secret
+      RECEIVER_BASE_URL: http://127.0.0.1:8000
+      ALLOWED_ORIGINS: http://localhost:3000
+      API_INTERNAL_URL: http://127.0.0.1:8000
+      GUEST_SESSIONS_PER_IP: "1000"
+      E2E_BASE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/api/requirements*.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - name: Start API and worker
+        working-directory: services/api
+        run: |
+          pip install -r requirements.txt
+          alembic upgrade head
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 > ../../api.log 2>&1 &
+          nohup python -m app.workers.run > ../../worker.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8000/health/ready && break; sleep 1; done
+      - name: Build and start web
+        working-directory: apps/web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          nohup pnpm start > ../../web.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/ && break; sleep 1; done
+      - name: Install browser
+        working-directory: apps/web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run Playwright
+        working-directory: apps/web
+        run: pnpm e2e
+      - name: Upload report and logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+            api.log
+            worker.log
+            web.log
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    # Advisories are published independently of our changes; report them without blocking unrelated work.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install pip-audit && pip-audit -r services/api/requirements.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - run: pnpm audit --prod --audit-level high
+        working-directory: apps/web
